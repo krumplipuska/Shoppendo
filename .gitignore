@@ -1,0 +1,15 @@
+node_modules/
+.expo/
+.expo-home/
+.npm-cache/
+.firebase/
+dist/
+web-build/
+android/
+ios/
+.env.local
+.env.*.local
+*.tgz
+*-debug.log
+*.tsbuildinfo
+test-results/

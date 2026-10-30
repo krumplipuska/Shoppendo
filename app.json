@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Shoppendo",
+    "slug": "shoppendo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "shoppendo",
+    "ios": { "supportsTablet": false, "bundleIdentifier": "com.shoppendo.app" },
+    "android": {
+      "package": "com.shoppendo.app",
+      "predictiveBackGestureEnabled": false
+    },
+    "web": { "favicon": "./assets/favicon.png", "bundler": "metro", "name": "Shoppendo", "shortName": "Shoppendo", "themeColor": "#246B4D" },
+    "plugins": [
+      "expo-font"
+    ]
+  }
+}
