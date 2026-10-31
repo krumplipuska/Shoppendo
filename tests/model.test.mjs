@@ -2,7 +2,7 @@ import { entityTone } from '../src/theme.ts';
 import { deleteSwipeProgress, backSwipeDirection, swipeAxis } from '../src/interaction.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acknowledge, activeItems, decodeSaved, doneItems, edit, emptyState, formatCode, GROUP_ICONS, isGroup, itemSuggestions, listItems, mergeRemote, mergeCategoryOrder, normalizeCode, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, storeInitials, validName } from '../src/model.ts';
+import { acknowledge, activeItems, decodeSaved, doneItems, doneOverflow, MAX_DONE_ITEMS, edit, emptyState, formatCode, GROUP_ICONS, isGroup, itemSuggestions, listItems, mergeRemote, mergeCategoryOrder, normalizeCode, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, storeInitials, validName } from '../src/model.ts';
 
 const code = 'ABCDEFGHJKLMNPQRSTUV';
 const item = (name, groupId = 'fruit') => ({ name, groupId, done: false, deleted: false, createdAt: 1, updatedAt: 1 });
@@ -281,4 +281,29 @@ test('category order drafts leave the store untouched until applied and preserve
   assert.deepEqual(data.groupOrder, ['fruit','bread']);
   assert.deepEqual(merged, ['bread','fruit']);
   assert.deepEqual(mergeCategoryOrder(['fruit','new'], ['bread','fruit','fruit']), ['fruit','new']);
+});
+
+
+test('Done retains the newest 100 and pruning never removes active items or other stores', () => {
+  const data = shop();
+  for (let n=0;n<103;n++) data.items['done'+n] = { ...item('Done '+n), done:true, updatedAt:n+10 };
+  data.items.deleted = { ...item('Already deleted'), done:true, deleted:true, updatedAt:0 };
+  assert.equal(MAX_DONE_ITEMS,100);
+  assert.deepEqual(doneOverflow(data), ['done2','done1','done0']);
+  assert.equal(doneItems(data).length,100);
+  assert.equal(doneItems(data)[0][0],'done102');
+  let saved = { ...emptyState(), shops:[data,{...shop(),id:'other-shop'}] };
+  for (const entityId of doneOverflow(data)) saved = edit(saved, write('trim'+entityId,'items',entityId,{deleted:true,updatedAt:1000}));
+  assert.deepEqual(doneOverflow(saved.shops[0]),[]);
+  assert.equal(saved.shops[0].items.apple.deleted,false);
+  assert.equal(saved.shops[1].items.apple.deleted,false);
+  const replay = mergeRemote(saved,code,'items',data.items);
+  assert.equal(replay.shops[0].items.done0.deleted,true);
+});
+
+
+test('drag gaps support dropping at the bottom, including moving the first row past every neighbor', async () => {
+  const { itemDragLayout } = await import('../src/interaction.ts');
+  assert.deepEqual(itemDragLayout(['a','b','c'],{source:'a',target:'c',after:true,height:70}),{shifts:{b:-70,c:-70},delta:0});
+  assert.deepEqual(itemDragLayout(['a','b','c'],{source:'c',target:'c',after:true,height:70}),{shifts:{},delta:0});
 });

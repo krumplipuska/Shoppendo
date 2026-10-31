@@ -4,11 +4,11 @@ import { initializeAuth, getAuth, signInAnonymously, connectAuthEmulator } from 
 import * as FirebaseAuth from 'firebase/auth';
 import type { Persistence } from 'firebase/auth';
 import {
-  getFirestore, connectFirestoreEmulator, collection, doc, getDocFromServer,
-  getDocsFromServer, onSnapshot, setDoc, writeBatch,
+  getFirestore, connectFirestoreEmulator,
 } from 'firebase/firestore';
 import { Platform } from 'react-native';
-import { isGroup, isItem, isShopMeta, type Shop, type Write } from './model';
+import type { Shop, Write } from './model';
+import { readShop, writeShop, watchShopDocument, stopShopSharing } from './shop-document';
 
 const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
 const emulatorHost = process.env.EXPO_PUBLIC_FIREBASE_EMULATOR_HOST;
@@ -61,60 +61,31 @@ export async function connect() {
   return { ...services, uid: services.auth.currentUser!.uid };
 }
 
-export async function sendWrites(writes: Write[]) {
+export async function sendWrites(writes: Write[], localShop?: Shop) {
   const { db, uid } = await connect();
-  const shopId = writes[0].shopId;
-  const batch = writeBatch(db);
-  batch.set(doc(db, 'shops', shopId, 'members', uid), { uid });
-  // Each item is its own document: two people adding different items never replace each other's list.
-  const merged = new Map<string, Write>();
-  for (const write of writes) {
-    const key = `${write.target}/${write.entityId}`;
-    const previous = merged.get(key);
-    merged.set(key, { ...write, data: { ...previous?.data, ...write.data } });
-  }
-  for (const write of merged.values()) {
-    const ref = write.target === 'shop' ? doc(db, 'shops', shopId)
-      : doc(db, 'shops', shopId, write.target, write.entityId);
-    batch.set(ref, write.data, { merge: true });
-  }
-  await deadline(batch.commit());
+  await deadline(writeShop(db, uid, writes, localShop));
+}
+
+export async function publishShop(shop: Shop) {
+  const { db, uid } = await connect();
+  await deadline(writeShop(db, uid, [], shop));
 }
 
 export async function joinRemote(shopId: string): Promise<Shop> {
   const { db, uid } = await connect();
-  const meta = await deadline(getDocFromServer(doc(db, 'shops', shopId)));
-  if (!meta.exists()) throw new Error('No shop found with that ID. Check it and try again.');
-  const data = meta.data();
-  if (!isShopMeta(data)) throw new Error('This shop has an unsupported format.');
-  await deadline(setDoc(doc(db, 'shops', shopId, 'members', uid), { uid }));
-  const [groups, items] = await deadline(Promise.all([
-    getDocsFromServer(collection(db, 'shops', shopId, 'groups')),
-    getDocsFromServer(collection(db, 'shops', shopId, 'items')),
-  ]));
-  return {
-    id: shopId, name: data.name, createdAt: data.createdAt, groupOrder: data.groupOrder, shared: true,
-    groups: Object.fromEntries(groups.docs.filter(d => isGroup(d.data())).map(d => [d.id, d.data()])),
-    items: Object.fromEntries(items.docs.filter(d => isItem(d.data())).map(d => [d.id, d.data()])),
-  } as Shop;
+  return deadline(readShop(db, uid, shopId));
 }
 
 export async function watchShop(
-  shopId: string,
+  shop: Shop,
   receive: (target: Write['target'], data: Record<string, unknown>) => void,
   fail: (error: Error) => void,
 ) {
+  const { db, uid } = await connect();
+  return watchShopDocument(db, uid, shop.id, remote => receive('shop', { ...remote }), fail, shop);
+}
+
+export async function stopSharing(shopId: string) {
   const { db } = await connect();
-  const stops = [
-    onSnapshot(doc(db, 'shops', shopId), snap => {
-      if (snap.exists() && isShopMeta(snap.data())) receive('shop', snap.data());
-    }, fail),
-    onSnapshot(collection(db, 'shops', shopId, 'groups'), snap => {
-      receive('groups', Object.fromEntries(snap.docs.filter(d => isGroup(d.data())).map(d => [d.id, d.data()])));
-    }, fail),
-    onSnapshot(collection(db, 'shops', shopId, 'items'), snap => {
-      receive('items', Object.fromEntries(snap.docs.filter(d => isItem(d.data())).map(d => [d.id, d.data()])));
-    }, fail),
-  ];
-  return () => stops.forEach(stop => stop());
+  await deadline(stopShopSharing(db, shopId));
 }

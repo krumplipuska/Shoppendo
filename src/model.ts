@@ -85,7 +85,8 @@ export function mergeRemote(state: SavedState, shopId: string, target: Write['ta
     shops: state.shops.map(shop => {
       if (shop.id !== shopId) return shop;
       let merged = target === 'shop'
-        ? { ...shop, name: data.name as string, groupOrder: data.groupOrder as string[] }
+        ? { ...shop, name: data.name as string, groupOrder: data.groupOrder as string[],
+          ...(data.groups && data.items ? { groups: data.groups as Shop['groups'], items: data.items as Shop['items'] } : {}) }
         : { ...shop, [target]: data };
       for (const write of state.outbox.filter(w => w.shopId === shopId)) merged = applyWrite(merged, write);
       return merged;
@@ -156,7 +157,7 @@ export function itemSuggestions(shops: Shop[], shop: Shop, query: string) {
   }).slice(0, 5).map(({ name, groupId }) => ({ name, groupId }));
 }
 
-// A move usually changes one document, preserving other people's concurrent edits.
+// A move usually needs only one item patch.
 export function planItemMove(shop: Shop, itemId: string, groupId: string, beforeId: string | null = null, allowCompleted = false) {
   const item = shop.items[itemId];
   if (!shop.groups[groupId] || shop.groups[groupId].deleted || !item || shop.groups[item.groupId]?.deleted || (item.done && !allowCompleted) || item.deleted || beforeId === itemId) return {};
@@ -180,10 +181,16 @@ export function storeInitials(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map(word => Array.from(word)[0]).join('').toLocaleUpperCase();
 }
 
+export const MAX_DONE_ITEMS = 100;
+export function doneOverflow(shop: Shop) {
+  return Object.entries(shop.items).filter(([, item]) => item.done && !item.deleted)
+    .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b)).slice(MAX_DONE_ITEMS).map(([id]) => id);
+}
+
 export function doneItems(shop: Shop) {
   return Object.entries(shop.items)
     .filter(([, item]) => item.done && !item.deleted && !shop.groups[item.groupId]?.deleted)
-    .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b));
+    .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b)).slice(0, MAX_DONE_ITEMS);
 }
 
 export function isGroup(value: unknown): value is Group {

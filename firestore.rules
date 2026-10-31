@@ -3,61 +3,35 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function validShopId(id) { return id.matches('^[A-HJ-NP-Z2-9]{20}$'); }
-    function member(shopId) {
-      return signedIn() && exists(/databases/$(database)/documents/shops/$(shopId)/members/$(request.auth.uid));
-    }
-    function memberAfter(shopId) {
-      return signedIn() && existsAfter(/databases/$(database)/documents/shops/$(shopId)/members/$(request.auth.uid));
-    }
-    function nameValid(name, max) { return name is string && name.size() > 0 && name.size() <= max; }
     function shopValid(d) {
-      return d.keys().hasOnly(['name', 'groupOrder', 'createdAt'])
-        && nameValid(d.name, 80) && d.groupOrder is list && d.groupOrder.size() <= 100
-        && d.createdAt is int;
-    }
-    function groupValid(d) {
-      return d.keys().hasOnly(['name', 'createdAt', 'icon', 'deleted']) && nameValid(d.name, 80) && d.createdAt is int
-        && (!('deleted' in d) || d.deleted is bool)
-        && (!('icon' in d) || d.icon in ['bag', 'fruit', 'bread', 'milk', 'fish', 'snow', 'clean', 'carrot', 'coffee', 'bottle', 'pet', 'heart', 'egg', 'cheese', 'meat', 'cake', 'pizza', 'rice', 'pasta', 'cereal', 'candy', 'chocolate', 'salt', 'oil', 'water', 'soda', 'beer', 'wine', 'flower', 'leaf', 'baby', 'medicine']);
-    }
-    function itemValid(d) {
-      return d.keys().hasOnly(['name', 'groupId', 'done', 'deleted', 'createdAt', 'updatedAt', 'position'])
-        && nameValid(d.name, 200) && d.groupId is string && d.groupId.matches('^[a-zA-Z0-9_-]{1,80}$')
-        && d.done is bool && d.deleted is bool && d.createdAt is int && d.updatedAt is int
-        && (!('position' in d) || (d.position is number && d.position > -1000000000000000000 && d.position < 1000000000000000000));
+      // Nested records are validated by the app. The invitation grants access to the whole shop.
+      return d.keys().hasOnly(['schemaVersion', 'name', 'createdAt', 'groupOrder', 'categories', 'stopped'])
+        && d.schemaVersion == 2 && d.name is string && d.name.size() > 0 && d.name.size() <= 80
+        && d.createdAt is int && d.groupOrder is list && d.groupOrder.size() <= 100
+        && d.categories is map
+        && (!('stopped' in d) || (d.stopped == true && d.categories.size() == 0 && d.groupOrder.size() == 0));
     }
     match /shops/{shopId} {
-      // IDs are 100-bit random invitation secrets, not sequential/public store identifiers.
-      // Knowing the ID permits joining; the top-level collection can never be enumerated.
+      // The random shop ID is the invitation. Shops can never be enumerated.
       allow get: if signedIn() && validShopId(shopId);
       allow list, delete: if false;
       allow create: if signedIn() && validShopId(shopId) && shopValid(request.resource.data);
-      allow update: if member(shopId) && shopValid(request.resource.data)
-        && request.resource.data.createdAt == resource.data.createdAt;
+      allow update: if signedIn() && validShopId(shopId) && shopValid(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && !('stopped' in resource.data);
 
+      // Compatibility reads for the one-time upgrade; new shops need no subcollections.
       match /members/{uid} {
         allow get: if signedIn() && request.auth.uid == uid;
-        allow list, delete: if false;
-        allow create, update: if signedIn() && request.auth.uid == uid
-          && validShopId(shopId) && existsAfter(/databases/$(database)/documents/shops/$(shopId))
+        allow create, update: if signedIn() && request.auth.uid == uid && validShopId(shopId)
+          && exists(/databases/$(database)/documents/shops/$(shopId))
+          && !('stopped' in get(/databases/$(database)/documents/shops/$(shopId)).data)
           && request.resource.data.keys().hasOnly(['uid']) && request.resource.data.uid == uid;
       }
-      match /groups/{groupId} {
-        allow read: if member(shopId);
-        allow create: if memberAfter(shopId) && groupId.matches('^[a-zA-Z0-9_-]{1,80}$') && groupValid(request.resource.data);
-        allow update: if memberAfter(shopId) && groupValid(request.resource.data)
-          && request.resource.data.createdAt == resource.data.createdAt;
-        allow delete: if false;
-      }
-      match /items/{itemId} {
-        allow read: if member(shopId);
-        allow create: if memberAfter(shopId) && itemId.matches('^[a-zA-Z0-9_-]{1,80}$') && itemValid(request.resource.data)
-          && existsAfter(/databases/$(database)/documents/shops/$(shopId)/groups/$(request.resource.data.groupId));
-        allow update: if memberAfter(shopId) && itemValid(request.resource.data)
-          && request.resource.data.createdAt == resource.data.createdAt
-          && existsAfter(/databases/$(database)/documents/shops/$(shopId)/groups/$(request.resource.data.groupId));
-        // A tombstone preserves deletion when another device reconnects with an older cache.
-        allow delete: if false;
+      match /{kind}/{id} {
+        allow read: if kind in ['groups', 'items'] && signedIn()
+          && exists(/databases/$(database)/documents/shops/$(shopId)/members/$(request.auth.uid))
+          && !('stopped' in get(/databases/$(database)/documents/shops/$(shopId)).data);
       }
     }
   }

@@ -1,3 +1,4 @@
+
 {
   "expo": {
     "name": "Shoppendo",
@@ -7,12 +8,21 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "scheme": "shoppendo",
-    "ios": { "supportsTablet": false, "bundleIdentifier": "com.shoppendo.app" },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.tamasbagyinszki.shoppendo.dev"
+    },
     "android": {
-      "package": "com.shoppendo.app",
+      "package": "com.tamasbagyinszki.shoppendo.dev",
       "predictiveBackGestureEnabled": false
     },
-    "web": { "favicon": "./assets/favicon.png", "bundler": "metro", "name": "Shoppendo", "shortName": "Shoppendo", "themeColor": "#246B4D" },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "name": "Shoppendo",
+      "shortName": "Shoppendo",
+      "themeColor": "#246B4D"
+    },
     "plugins": [
       "expo-font"
     ]

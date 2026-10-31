@@ -3,8 +3,8 @@ import * as Crypto from 'expo-crypto';
 import { AppState } from 'react-native';
 import { useSyncExternalStore } from 'react';
 import { acknowledge, CODE_ALPHABET, decodeSaved, edit, emptyState, mergeRemote, normalizeCode,
-  activeItems, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, GROUP_ICONS, validName, type GroupIcon, type ItemSort, type SavedState, type Shop, type Write } from './model';
-import { firebaseConfigured, joinRemote, sendWrites, watchShop } from './firebase';
+  activeItems, doneOverflow, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, GROUP_ICONS, validName, type GroupIcon, type ItemSort, type SavedState, type Shop, type Write } from './model';
+import { firebaseConfigured, joinRemote, publishShop, sendWrites, watchShop, stopSharing } from './firebase';
 
 const STORAGE_KEY = 'shoppendo.v1';
 let saved = emptyState();
@@ -40,7 +40,15 @@ export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong. Your local lists have been kept.';
 }
 
+function limitDone(next: SavedState) {
+  for (const shop of next.shops) {
+    for (const itemId of doneOverflow(shop)) next = edit(next, { id: id(), shopId: shop.id, target: 'items', entityId: itemId, data: { deleted: true, updatedAt: Date.now() } });
+  }
+  return next;
+}
+
 function persist(next: SavedState) {
+  next = limitDone(next);
   saved = next;
   notify();
   const raw = JSON.stringify(next);
@@ -62,7 +70,9 @@ export async function load() {
   loaded ??= (async () => {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      saved = raw ? decodeSaved(raw) : emptyState();
+      const restored = raw ? decodeSaved(raw) : emptyState();
+      saved = limitDone(restored);
+      if (saved !== restored) await persist(saved);
       notify({ ready: true, error: '' });
       void flush();
       refreshWatchers();
@@ -81,12 +91,12 @@ export function flush() {
     try {
       while (saved.outbox.length) {
         const firstShop = saved.outbox[0].shopId;
-        // ponytail: 15 writes keep membership/group checks within Firestore Rules' 20-access batch limit.
-        const batch = saved.outbox.filter(w => w.shopId === firstShop).slice(0, 15);
+        // All pending edits for one shop become one document write.
+        const batch = saved.outbox.filter(w => w.shopId === firstShop);
         await saveChain;
         if (!durable) break;
         notify({ syncing: true });
-        await sendWrites(batch);
+        await sendWrites(batch, saved.shops.find(shop => shop.id === firstShop));
         // Writes added during the network request must remain in the outbox.
         await persist(acknowledge(saved, batch.map(w => w.id)));
       }
@@ -111,7 +121,7 @@ function refreshWatchers() {
   for (const shop of shared) {
     if (watchers.has(shop.id) || starting.has(shop.id) || saved.outbox.some(w => w.shopId === shop.id && w.target === 'shop' && w.data.createdAt)) continue;
     starting.add(shop.id);
-    void watchShop(shop.id, (target, data) => {
+    void watchShop(shop, (target, data) => {
       void persist(mergeRemote(saved, shop.id, target, data)).catch(() => {});
     }, error => notify({ error: errorMessage(error) })).then(stop => {
       if (saved.shops.some(s => s.id === shop.id && s.shared)) watchers.set(shop.id, stop);
@@ -192,6 +202,7 @@ export const actions = {
     void persist({ ...saved, collapsed: [...set] }).catch(() => {});
   },
   setItemSort(itemSort: ItemSort) {
+    if ((saved.itemSort ?? 'group') === itemSort) return;
     void persist({ ...saved, itemSort }).catch(() => {});
   },
   setViewMode(viewMode: 'groups' | 'list') {
@@ -242,10 +253,23 @@ export const actions = {
       await persist({ ...saved, shops: saved.shops.map(s => s.id === shopId ? { ...s, shared: true } : s), outbox: [...saved.outbox, ...writes] });
     }
     await flush();
-    if (saved.outbox.some(w => w.shopId === shopId && w.target === 'shop' && w.data.createdAt)) {
-      throw new Error('Connect to the internet to finish sharing this shop. Your list is saved here.');
+    if (saved.outbox.some(w => w.shopId === shopId)) {
+      throw new Error(view.error || 'Connect to the internet to finish sharing this shop. Your list is saved here.');
     }
+    await publishShop(saved.shops.find(s => s.id === shopId)!);
     return shopId;
+  },
+  async stopSharing(shopIdToStop: string) {
+    await flush();
+    await stopSharing(shopIdToStop);
+    const newId = shopId();
+    watchers.get(shopIdToStop)?.();
+    watchers.delete(shopIdToStop);
+    await persist({ ...saved,
+      shops: saved.shops.map(shop => shop.id === shopIdToStop ? { ...shop, id: newId, shared: false } : shop),
+      outbox: saved.outbox.filter(write => write.shopId !== shopIdToStop) });
+    notify({ error: '' });
+    return newId;
   },
   async join(input: string) {
     const code = normalizeCode(input);
