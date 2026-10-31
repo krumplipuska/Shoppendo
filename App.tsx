@@ -1,9 +1,9 @@
 import { createContext, useContext, useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, unstable_batchedUpdates, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureDetector, GestureHandlerRootView, GestureStateManager, ScrollView as GestureScrollView, usePanGesture } from 'react-native-gesture-handler';
-import { DraxProvider, useDraxContext, DraxView, DraxHandle, DraxScrollView, DraxSnapbackTargetPreset } from 'react-native-drax';
+import { DraxProvider, useDraxId, useDraxContext, DraxView, DraxHandle, DraxScrollView, DraxSnapbackTargetPreset, type DraxViewMeasurements } from 'react-native-drax';
 import Animated, { FadeIn, FadeInUp, FadeInDown, FadeOut, FadeOutDown, ZoomIn, SlideInDown, Easing, LinearTransition, ReduceMotion, useSharedValue, useAnimatedReaction, useAnimatedStyle, cancelAnimation, withDelay, withTiming } from 'react-native-reanimated';
 import { useFonts } from 'expo-font';
 import * as Clipboard from 'expo-clipboard';
@@ -30,6 +30,8 @@ function dropGroup(shop: Shop, source: string, target: string, after: boolean) {
   order.splice(order.indexOf(target) + (after ? 1 : 0), 0, source);
   actions.reorder(shop.id, order);
 }
+
+function commitDrop(change: () => void) { unstable_batchedUpdates(change, undefined); }
 
 const DRAG_DELAY = 320;
 const rowMotion = LinearTransition.duration(160).reduceMotion(ReduceMotion.System);
@@ -103,6 +105,56 @@ const ItemDragContext = createContext<{
   start: (id: string, height: number) => void; over: (id: string, after: boolean) => void; stop: () => void;
 } | null>(null);
 
+function useListDrag(ids: string[]) {
+  const [preview, setPreview] = useState<ItemPreview | null>(null);
+  const current = useRef<ItemPreview | null>(null);
+  const update = (next: ItemPreview | null) => { current.current = next; setPreview(next); };
+  return { preview, shifts: preview ? itemDragLayout(ids, preview).shifts : {},
+    start: (id: string, height: number) => update({ source: id, target: id, after: false, height }),
+    over: (target: string, after: boolean) => { const previous = current.current; if (previous && (previous.target !== target || previous.after !== after)) update({ ...previous, target, after }); },
+    stop: () => update(null),
+  };
+}
+
+// Extend the last row's hit area into unused space without a surface or layout gap.
+function ListTail({ shopId, kind, last, drop }: { shopId: string; kind: Drag['kind']; last?: string; drop: (id: string) => void }) {
+  const preview = useContext(ItemDragContext);
+  const height = useWindowDimensions().height;
+  const id = useDraxId();
+  const { updateMeasurements } = useDraxContext();
+  const extendHitArea = useCallback((bounds: DraxViewMeasurements | undefined) => { if (bounds) updateMeasurements(id, { ...bounds, height }); }, [id, height, updateMeasurements]);
+  const latest = useRef({ last, drop }); latest.current = { last, drop };
+  return <DraxView id={id} onMeasure={extendHitArea} pointerEvents="none" draggable={false}
+    style={{ height: 0 }} acceptsDrag={payload => accepts(payload, shopId, kind)}
+    onReceiveDragOver={() => { if (latest.current.last) preview?.over(latest.current.last, true); }}
+    onReceiveDragDrop={({ dragged }) => {
+      const payload = dragged.payload;
+      if (accepts(payload, shopId, kind)) commitDrop(() => { latest.current.drop(payload.id); preview?.stop(); });
+      return DraxSnapbackTargetPreset.None;
+    }} />;
+}
+
+function ItemCategory({ shop, groupId }: { shop: Shop; groupId: string }) {
+  const [shown, setShown] = useState(groupId);
+  const angle = useSharedValue(0);
+  const tone = entityTone(shown, orderedGroups(shop));
+  useEffect(() => {
+    if (groupId === shown) { angle.value = 0; return; }
+    const reveal = () => {
+      setShown(groupId); angle.value = -90;
+      requestAnimationFrame(() => { angle.value = withTiming(0, { duration: 120, reduceMotion: ReduceMotion.System }); });
+    };
+    const timer = setTimeout(() => {
+      angle.value = withTiming(90, { duration: 120, reduceMotion: ReduceMotion.System }, finished => { if (finished) runOnJS(reveal)(); });
+    }, 400);
+    return () => { clearTimeout(timer); cancelAnimation(angle); };
+  }, [groupId]);
+  const flip = useAnimatedStyle(() => ({ transform: [{ perspective: 400 }, { rotateY: `${angle.value}deg` }] }));
+  return <Animated.View style={[s.itemCategory, { backgroundColor: tone.soft, backfaceVisibility: 'hidden' }, flip]}>
+    <Icon name={shop.groups[shown]?.icon ?? 'bag'} color={tone.color} size={20} />
+  </Animated.View>;
+}
+
 function ItemStack({ ids, children }: { ids: string[]; children: React.ReactNode }) {
   const drag = useContext(ItemDragContext);
   const [height, setHeight] = useState(0);
@@ -112,11 +164,13 @@ function ItemStack({ ids, children }: { ids: string[]; children: React.ReactNode
 }
 
 function ItemRow({ shop, id, item, toggle, showCategory = false }: { shop: Shop; id: string; item: Item; toggle: () => void; showCategory?: boolean }) {
+  const current = useRef({ shop, item }); current.current = { shop, item };
   const tone = entityTone(item.groupId, orderedGroups(shop));
   const editItem = useContext(ItemEditorContext);
   const preview = useContext(ItemDragContext);
   const shift = preview?.shifts[id] ?? 0;
-  const motion = useAnimatedStyle(() => ({ transform: [{ translateY: withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) }] }));
+  const activePreview = Boolean(preview?.preview);
+  const motion = useAnimatedStyle(() => ({ transform: [{ translateY: activePreview ? withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }] }));
   const drag = useHoldDrag();
   const move = (direction: number) => {
     const ids = activeItems(shop, item.groupId).map(([key]) => key);
@@ -125,7 +179,7 @@ function ItemRow({ shop, id, item, toggle, showCategory = false }: { shop: Shop;
     ids.splice(index, 1); ids.splice(to, 0, id);
     actions.moveItem(shop.id, id, item.groupId, ids[to + 1] ?? null);
   };
-  return <Animated.View layout={rowMotion} entering={FadeInUp.duration(420).withInitialValues({ opacity: 0, transform: [{ translateY: -56 }] }).easing(Easing.out(Easing.cubic)).reduceMotion(ReduceMotion.System)} exiting={item.done ? FadeOutDown.duration(220).reduceMotion(ReduceMotion.System) : fadeOut} collapsable={false}>
+  return <Animated.View entering={FadeInUp.duration(420).withInitialValues({ opacity: 0, transform: [{ translateY: -56 }] }).easing(Easing.out(Easing.cubic)).reduceMotion(ReduceMotion.System)} exiting={item.done ? FadeOutDown.duration(220).reduceMotion(ReduceMotion.System) : fadeOut} collapsable={false}>
     <DraxView dragHandle animateSnap={false} draggable={!item.done} receptive={!item.done} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
       dragPayload={{ kind: 'item', id, shopId: shop.id } satisfies Drag}
       renderHoverContent={({ dimensions }) => <View style={[s.item, { width: dimensions?.width, height: dimensions?.height }]}>
@@ -134,9 +188,9 @@ function ItemRow({ shop, id, item, toggle, showCategory = false }: { shop: Shop;
         <Text style={s.itemName}>{item.name}</Text>
       </View>}
       acceptsDrag={payload => accepts(payload, shop.id) && (payload.kind === 'item' ? payload.id !== id : payload.kind === 'group' && payload.id !== item.groupId)}
-      onDragStart={event => { drag.start(); preview?.start(id, event.dragged.measurements?.height ?? 52); }}
+      onDragStart={event => { actions.setItemSort('group'); drag.start(); preview?.start(id, event.dragged.measurements?.height ?? 52); }}
       onDrag={() => preview?.over(id, false)}
-      onDragEnd={() => { drag.stop(); preview?.stop(); }} onDragDrop={() => { drag.stop(); preview?.stop(); }}
+      onDragEnd={() => { drag.stop(); preview?.stop(); }} onDragDrop={drag.stop}
       onReceiveDragOver={({ receiver, dragged }) => {
         const after = receiver.receiveOffsetRatio.y >= 0.5;
         if (accepts(dragged.payload, shop.id, 'item')) preview?.over(id, after);
@@ -146,9 +200,10 @@ function ItemRow({ shop, id, item, toggle, showCategory = false }: { shop: Shop;
         if (!accepts(payload, shop.id)) return;
         if (payload.kind === 'group') dropGroup(shop, payload.id, item.groupId, receiver.receiveOffsetRatio.y >= 0.5);
         else if (payload.kind === 'item') {
-          const ids = activeItems(shop, item.groupId).map(([key]) => key).filter(key => key !== payload.id);
+          const { shop: latestShop, item: latestItem } = current.current;
+          const ids = activeItems(latestShop, latestItem.groupId).map(([key]) => key).filter(key => key !== payload.id);
           const before = receiver.receiveOffsetRatio.y < 0.5 ? id : ids[ids.indexOf(id) + 1] ?? null;
-          actions.moveItem(shop.id, payload.id, item.groupId, before);
+          commitDrop(() => { actions.moveItem(shop.id, payload.id, current.current.item.groupId, before); preview?.stop(); });
         }
         return DraxSnapbackTargetPreset.None;
       }}
@@ -164,7 +219,7 @@ function ItemRow({ shop, id, item, toggle, showCategory = false }: { shop: Shop;
           {showCategory && <Pressable accessibilityRole="button" accessibilityLabel={`Change category for ${item.name}`}
             accessibilityHint={`Current category: ${shop.groups[item.groupId]?.name ?? 'Unknown'}`} style={s.itemCategoryTouch}
             onPress={() => { if (!drag.held.current) editItem(id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY}>
-            <View style={[s.itemCategory, { backgroundColor: tone.soft }]}><Icon name={shop.groups[item.groupId]?.icon ?? 'bag'} color={tone.color} size={20} /></View>
+            <ItemCategory shop={shop} groupId={item.groupId} />
           </Pressable>}
           <View style={s.flex} pointerEvents="none" />
           <View style={s.itemAction}>{action()}</View>
@@ -250,6 +305,11 @@ function AddStore({ open, close }: { open: (id: string) => void; close: () => vo
 
 function StoreRow({ shop, shops, open, edit, editing, close }: { shop: Shop; shops: Shop[]; open: (id: string) => void; edit: () => void; editing: boolean; close: () => void }) {
   const drag = useHoldDrag();
+  const preview = useContext(ItemDragContext);
+  const latestShops = useRef(shops); latestShops.current = shops;
+  const shift = preview?.shifts[shop.id] ?? 0;
+  const activePreview = Boolean(preview?.preview);
+  const motion = useAnimatedStyle(() => ({ transform: [{ translateY: activePreview ? withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }] }));
   const tone = entityTone(shop.id, shops.map(shop => shop.id));
   const pending = useShops().data.outbox.some(w => w.shopId === shop.id && w.target === 'shop' && w.data.createdAt);
   const move = (direction: number) => {
@@ -257,23 +317,25 @@ function StoreRow({ shop, shops, open, edit, editing, close }: { shop: Shop; sho
     if (to < 0 || to >= order.length) return;
     [order[from], order[to]] = [order[to], order[from]]; actions.reorderShops(order);
   };
-  return <Animated.View layout={rowMotion} entering={fadeIn} exiting={fadeOut} collapsable={false}>
+  return <Animated.View entering={fadeIn} exiting={fadeOut} collapsable={false}>
     {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle style={s.dropTarget} animateSnap={false} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
       dragPayload={{ kind: 'store', id: shop.id, shopId: '' } satisfies Drag}
       renderHoverContent={({ dimensions }) => <View style={[s.storeRow, { width: dimensions?.width, height: dimensions?.height }]}>
         <View style={[s.storeBadge, { backgroundColor: tone.soft }]}><Text style={[s.storeInitials, { color: tone.color }]}>{storeInitials(shop.name)}</Text></View><Text style={[s.storeName, { color: tone.color }]}>{shop.name}</Text>
       </View>}
       acceptsDrag={payload => accepts(payload, '', 'store') && payload.id !== shop.id}
-      onDragStart={drag.start} onDragEnd={drag.stop} onDragDrop={drag.stop}
+      onDragStart={event => { drag.start(); preview?.start(shop.id, event.dragged.measurements?.height ?? 70); }} onDrag={() => preview?.over(shop.id, false)}
+      onDragEnd={() => { drag.stop(); preview?.stop(); }} onDragDrop={drag.stop}
+      onReceiveDragOver={({ receiver }) => preview?.over(shop.id, receiver.receiveOffsetRatio.y >= 0.5)}
       onReceiveDragDrop={({ dragged, receiver }) => {
         if (!accepts(dragged.payload, '', 'store')) return;
         const source = dragged.payload.id;
-        const order = shops.map(s => s.id).filter(id => id !== source);
+        const order = latestShops.current.map(s => s.id).filter(id => id !== source);
         order.splice(order.indexOf(shop.id) + (receiver.receiveOffsetRatio.y >= 0.5 ? 1 : 0), 0, source);
-        actions.reorderShops(order); return DraxSnapbackTargetPreset.None;
-      }} draggingStyle={s.dragOrigin} hoverDraggingStyle={s.dragging} receivingStyle={s.groupReceiving}>
+        commitDrop(() => { actions.reorderShops(order); preview?.stop(); }); return DraxSnapbackTargetPreset.None;
+      }} draggingStyle={s.itemDragOrigin} hoverDraggingStyle={s.dragging}>
       <SwipeToDelete label={shop.name} onDelete={() => actions.removeShop(shop.id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
-        <View style={s.storeRow}>
+        <Animated.View style={motion}><View style={s.storeRow}>
           <DraxHandle style={StyleSheet.absoluteFill}><View style={s.storeDragArea} pointerEvents="box-none">
             <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel={`Open ${shop.name} row`}
               onPress={() => { if (!drag.held.current) open(shop.id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} />
@@ -292,7 +354,7 @@ function StoreRow({ shop, shops, open, edit, editing, close }: { shop: Shop; sho
             </Pressable>
             {shop.shared && <Text pointerEvents="none" style={s.sharedLabel}>{pending ? 'Waiting to share' : 'Shared'}</Text>}
           </View>
-        </View>}
+        </View></Animated.View>}
       </SwipeToDelete>
     </DraxView>}
   </Animated.View>;
@@ -301,52 +363,61 @@ function StoreRow({ shop, shops, open, edit, editing, close }: { shop: Shop; sho
 function ShopList({ open }: { open: (id: string) => void }) {
   const { data } = useShops();
   const [adding, setAdding] = useState(false);
+  const order = data.shops.map(shop => shop.id);
+  const dragList = useListDrag(order);
+  const latestOrder = useRef(order); latestOrder.current = order;
   const [editing, setEditing] = useState<string | null>(null);
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   useEffect(() => { if (editing) requestAnimationFrame(() => scroll.current?.scrollTo({ y: 0, animated: true })); }, [editing]);
-  return <View style={s.flex}>
+  return <ItemDragContext.Provider value={dragList}><View style={s.flex}>
     <DraxScrollView ref={instance => { scroll.current = instance as unknown as React.ComponentRef<typeof ScrollView>; }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} contentContainerStyle={s.storesContent} style={s.flex}>
       <View style={s.titleRow}><Text accessibilityRole="header" style={s.title}>Stores</Text><IconButton icon="plus" label="Add or join a store" onPress={() => setAdding(true)} filled /></View>
       {adding && <AddStore open={open} close={() => setAdding(false)} />}
       {editing && data.shops.some(shop => shop.id === editing) && <NameEditor name={data.shops.find(shop => shop.id === editing)!.name} label="Edit store name" save={name => actions.renameShop(editing, name)} close={() => setEditing(null)} />}
-      <View style={s.storeRows}>{data.shops.map(shop => <StoreRow key={shop.id} shop={shop} shops={data.shops} open={open}
-        editing={false} edit={() => setEditing(shop.id)} close={() => setEditing(null)} />)}</View>
+      <View style={s.storeRows}><ItemStack ids={order}>{data.shops.map(shop => <StoreRow key={shop.id} shop={shop} shops={data.shops} open={open}
+        editing={false} edit={() => setEditing(shop.id)} close={() => setEditing(null)} />)}</ItemStack></View>
+      <ListTail shopId="" kind="store" last={order.at(-1)} drop={id => actions.reorderShops([...latestOrder.current.filter(key => key !== id), id])} />
       {!data.shops.length && <View style={s.emptyStores}><Icon name="bag" size={32} /><Text style={s.emptyTitle}>Your first store</Text><Text style={s.caption}>Tap + to create a store or join by ID.</Text></View>}
     </DraxScrollView>
-  </View>;
+  </View></ItemDragContext.Provider>;
 }
 
-function ShareShop({ shop, close }: { shop: Shop; close: () => void }) {
-  const [code, setCode] = useState<string | null>(null);
+function ShareShop({ shop, close, replaced }: { shop: Shop; close: () => void; replaced: (id: string) => void }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  const publish = useCallback(async () => {
+  async function share(copyOnly = false) {
     setBusy(true); setError('');
-    try { setCode(await actions.share(shop.id)); }
+    try {
+      const code = copyOnly && shop.shared ? shop.id : await actions.share(shop.id);
+      if (copyOnly) {
+        await Clipboard.setStringAsync(formatCode(code)); setCopied(true);
+      } else {
+        await Share.share({ title: `Share ${shop.name}`, message: `Join ${shop.name} in Shoppendo.\nShop ID: ${formatCode(code)}` });
+      }
+    } catch (error) { setError(errorMessage(error)); }
+    finally { setBusy(false); }
+  }
+  async function stop() {
+    setBusy(true); setError('');
+    try { replaced(await actions.stopSharing(shop.id)); close(); }
     catch (error) { setError(errorMessage(error)); }
     finally { setBusy(false); }
-  }, [shop.id]);
-  useEffect(() => { void publish(); }, [publish]);
-  async function copy() {
-    if (!code) return;
-    try { await Clipboard.setStringAsync(formatCode(code)); setCopied(true); }
-    catch { setError('Could not copy automatically. You can select and copy the ID above.'); }
-  }
-  async function share() {
-    if (!code) return;
-    try { await Share.share({ title: `Share ${shop.name}`, message: `Join ${shop.name} in Shoppendo.\nShop ID: ${formatCode(code)}` }); }
-    catch { await copy(); }
   }
   return <Sheet visible title={`Share ${shop.name}`} onClose={close}>
-    <Text style={s.caption}>Send this ID to share the same shopping list.</Text>
-    {busy && !code ? <View style={s.shareLoading}><ActivityIndicator color={c.primary} /><Text style={s.caption}>Getting your shop ready…</Text></View> : code ? <>
-      <View style={s.idBox}><Text style={s.idLabel}>SHOP ID</Text><Text selectable style={s.idCode}>{formatCode(code)}</Text></View>
-      <Text style={s.caption}>Anyone with this ID can edit this shop.</Text>
-      <View style={s.shareActions}><View style={s.flex}><Button label={copied ? 'Copied!' : 'Copy ID'} secondary onPress={() => void copy()} /></View><View style={s.flex}><Button label="Share ID" onPress={() => void share()} /></View></View>
-    </> : null}
+    <Text style={s.caption}>Anyone with this ID can edit this shop.</Text>
+    <View style={s.idBox}>
+      <Text style={s.idLabel}>SHOP ID</Text>
+      <View style={s.shareActions}><Text selectable style={[s.idCode, s.flex]}>{formatCode(shop.id)}</Text>
+        <IconButton icon={copied ? 'check' : 'copy'} label={copied ? 'ID copied' : 'Copy shop ID'} disabled={busy} onPress={() => void share(true)} />
+      </View>
+    </View>
+    <Button label="Share ID" busy={busy} onPress={() => void share()} />
+    {shop.shared && <>
+      <Button label="Stop sharing" secondary disabled={busy} onPress={() => void stop()} />
+      <Text style={s.caption}>Stops sharing for everyone. Your list stays on this phone; the old ID will stop working.</Text>
+    </>}
     {Boolean(error) && <Text accessibilityRole="alert" style={ui.errorText}>{error}</Text>}
-    {!busy && !code && <Button label="Try again" onPress={() => void publish()} />}
   </Sheet>;
 }
 
@@ -388,18 +459,26 @@ function ItemArrival({ shop, item, close, start, end }: { shop: Shop; item: { na
 
 function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: string[]; change: (order: string[]) => void; close: () => void }) {
   const order = mergeCategoryOrder(orderedGroups(shop), draft);
-  return <View style={s.categoryOrderPage}>
+  const dragList = useListDrag(order);
+  const latest = useRef(order); latest.current = order;
+  return <ItemDragContext.Provider value={dragList}><View style={s.categoryOrderPage}>
     <Text style={s.editorHeading}>Category order</Text>
     <Text style={s.caption}>Hold anywhere on a row and drag. Changes apply when you close this panel.</Text>
-    <DraxScrollView style={s.flex} contentContainerStyle={{ paddingTop: 12, paddingBottom: 20 }} bounces={false}>
-      {order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} />)}
+    <DraxScrollView style={s.flex} contentContainerStyle={{ paddingTop: 12, paddingBottom: 20, flexGrow: 1 }} bounces={false}>
+      <ItemStack ids={order}>{order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} />)}</ItemStack>
+      <ListTail shopId={shop.id} kind="group" last={order.at(-1)} drop={id => change([...latest.current.filter(key => key !== id), id])} />
     </DraxScrollView>
     <Button label="Done sorting categories" onPress={close} />
-  </View>;
+  </View></ItemDragContext.Provider>;
 }
 
 function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string; order: string[]; change: (order: string[]) => void }) {
   const drag = useHoldDrag();
+  const preview = useContext(ItemDragContext);
+  const shift = preview?.shifts[id] ?? 0;
+  const activePreview = Boolean(preview?.preview);
+  const motion = useAnimatedStyle(() => ({ transform: [{ translateY: activePreview ? withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }] }));
+  const latestOrder = useRef(order); latestOrder.current = order;
   const tone = entityTone(id, orderedGroups(shop));
   const group = shop.groups[id];
   const move = (direction: number) => {
@@ -408,23 +487,25 @@ function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string;
     const next = [...order]; [next[index], next[to]] = [next[to], next[index]]; change(next);
   };
   const content = <><View style={[s.itemCategory, { backgroundColor: tone.soft }]}><Icon name={group.icon ?? 'bag'} color={tone.color} /></View><Text style={[s.groupName, { color: tone.color }]}>{group.name}</Text></>;
-  return <Animated.View layout={rowMotion}><DraxView animateSnap={false} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+  return <Animated.View><DraxView animateSnap={false} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
     dragPayload={{ kind: 'group', id, shopId: shop.id } satisfies Drag} acceptsDrag={payload => accepts(payload, shop.id, 'group') && payload.id !== id}
     renderHoverContent={({ dimensions }) => <View style={[s.categoryOrderRow, { width: dimensions?.width, height: dimensions?.height }]}>{content}</View>}
-    onDragStart={drag.start} onDragEnd={drag.stop} onDragDrop={drag.stop} draggingStyle={s.dragOrigin} hoverDraggingStyle={s.dragging} receivingStyle={s.groupReceiving}
+    onDragStart={event => { drag.start(); preview?.start(id, event.dragged.measurements?.height ?? 54); }} onDrag={() => preview?.over(id, false)}
+    onDragEnd={() => { drag.stop(); preview?.stop(); }} onDragDrop={drag.stop}
+    onReceiveDragOver={({ receiver }) => preview?.over(id, receiver.receiveOffsetRatio.y >= 0.5)} draggingStyle={s.itemDragOrigin} hoverDraggingStyle={s.dragging}
     onReceiveDragDrop={({ dragged, receiver }) => {
       const payload = dragged.payload;
       if (accepts(payload, shop.id, 'group')) {
-        const next = order.filter(key => key !== payload.id);
-        next.splice(next.indexOf(id) + (receiver.receiveOffsetRatio.y >= 0.5 ? 1 : 0), 0, payload.id); change(next);
+        const next = latestOrder.current.filter(key => key !== payload.id);
+        next.splice(next.indexOf(id) + (receiver.receiveOffsetRatio.y >= 0.5 ? 1 : 0), 0, payload.id); commitDrop(() => { change(next); preview?.stop(); });
       }
       return DraxSnapbackTargetPreset.None;
     }}>
-    <Pressable style={s.categoryOrderRow} accessibilityRole="button" accessibilityLabel={`${group.name} category order`} accessibilityHint="Hold anywhere to drag. Alt+Up or Alt+Down also moves the category."
+    <Animated.View style={motion}><Pressable style={s.categoryOrderRow} accessibilityRole="button" accessibilityLabel={`${group.name} category order`} accessibilityHint="Hold anywhere to drag. Alt+Up or Alt+Down also moves the category."
       accessibilityActions={[{ name: 'increment', label: 'Move later' }, { name: 'decrement', label: 'Move earlier' }]}
       onAccessibilityAction={event => move(event.nativeEvent.actionName === 'increment' ? 1 : -1)}
       onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp','ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}
-      onLongPress={() => {}} delayLongPress={DRAG_DELAY}>{content}</Pressable>
+      onLongPress={() => {}} delayLongPress={DRAG_DELAY}>{content}</Pressable></Animated.View>
   </DraxView></Animated.View>;
 }
 
@@ -566,7 +647,7 @@ function usePageBack(back: () => void, enabled: boolean) {
   return { header, edge, body, scrollY, style, close: () => { if (finishEditing()) exit('left'); } };
 }
 
-function ShoppingList({ shop, back }: { shop: Shop; back: () => void }) {
+function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; replaced: (id: string) => void }) {
   const { data, syncing } = useShops();
   const [newGroup, setNewGroup] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -635,6 +716,7 @@ function ShoppingList({ shop, back }: { shop: Shop; back: () => void }) {
         </View>}
         {!editingStore && !sortingGroups && <>
           <IconButton icon="plus" label="Add item" color={shopTone.color} filled disabled={!groups.length} onPress={() => setTopAdding(true)} />
+          <IconButton icon="share" label="Share shop" onPress={() => { setMenuOpen(false); setSharing(true); }} />
           <IconButton icon="more" label="Shop menu" onPress={() => setMenuOpen(!menuOpen)} />
         </>}
       </View></GestureDetector>
@@ -670,12 +752,16 @@ function ShoppingList({ shop, back }: { shop: Shop; back: () => void }) {
         </Pressable>}
       </View>
       {!groups.length && <View style={s.noGroups}><Text style={s.emptyTitle}>Start with a group</Text><Text style={s.caption}>Use ⋯ → Add group to create your first category.</Text></View>}
+      <ListTail shopId={shop.id} kind="item" last={flatItems.at(-1)?.[0]} drop={id => {
+        const groupId = flatItems.at(-1)?.[1].groupId ?? shop.items[id]?.groupId;
+        if (groupId) actions.moveItem(shop.id, id, groupId);
+      }} />
       <View>
         {completed.length > 0 && <View style={s.doneSection}><Text style={s.doneLabel}>Done</Text>{completed.map(([id]) => <ItemRow key={id} shop={shop} id={id} item={shop.items[id]} showCategory toggle={() => toggle(id)} />)}</View>}
       </View>
     </ShopScroll></View></GestureDetector></ItemDragContext.Provider></ItemEditorContext.Provider>}
     {arrival && !sortingGroups && <ItemArrival key={arrival.id} shop={shop} item={arrival} start={76} end={headerHeight + 16} close={() => setArrival(null)} />}
-    {sharing && <ShareShop shop={shop} close={() => setSharing(false)} />}
+    {sharing && <ShareShop shop={shop} replaced={replaced} close={() => setSharing(false)} />}
   </Animated.View></GestureDetector></Animated.View>;
 }
 
@@ -689,7 +775,7 @@ function Main() {
     {Boolean(error) && <View accessibilityRole="alert" style={s.errorBanner}><Text style={[s.caption, s.flex]}>{error}</Text><Pressable accessibilityRole="button" onPress={() => { actions.clearError(); void actions.retry().catch(() => {}); }} style={s.retry}><Text style={s.link}>Retry</Text></Pressable></View>}
     <View style={s.flex}>
       <View {...(Platform.OS === 'web' ? { inert: Boolean(shop) } : {})} style={s.flex} pointerEvents={shop ? 'none' : 'auto'} accessibilityElementsHidden={Boolean(shop)} importantForAccessibility={shop ? 'no-hide-descendants' : 'auto'} aria-hidden={Boolean(shop)}><ShopList open={setSelected} /></View>
-      {shop && <View style={StyleSheet.absoluteFill}><ShoppingList key={shop.id} shop={shop} back={() => setSelected(null)} /></View>}
+      {shop && <View style={StyleSheet.absoluteFill}><ShoppingList key={shop.id} shop={shop} replaced={setSelected} back={() => setSelected(null)} /></View>}
     </View>
     {undo && <Animated.View entering={fadeIn} exiting={fadeOut} style={s.undoBanner} accessibilityLiveRegion="polite">
       <Text numberOfLines={1} style={s.undoLabel}>{undo.label}</Text><Pressable accessibilityRole="button" accessibilityLabel="Undo deletion" onPress={actions.undo} style={s.undoButton}><Text style={s.undoText}>Undo</Text></Pressable>
@@ -739,7 +825,7 @@ const s = StyleSheet.create({
   dropTarget: { borderWidth: 1, borderColor: 'transparent', borderRadius: 12 },
   undoBanner: { position: 'absolute', bottom: 16, left: 16, right: 16, borderRadius: 14, backgroundColor: c.text, flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 6, gap: 12, elevation: 6 },
   undoLabel: { flex: 1, fontFamily: f.medium, fontSize: 13, color: c.white }, undoButton: { minHeight: 50, minWidth: 62, alignItems: 'center', justifyContent: 'center' }, undoText: { fontFamily: f.bold, fontSize: 14, color: '#B9E0C5' },
-  storesContent: { paddingHorizontal: 24, paddingTop: 38, paddingBottom: 48 },
+  storesContent: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 38, paddingBottom: 48 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   title: { fontFamily: f.bold, fontSize: 29, lineHeight: 38, color: c.text, flexShrink: 1 },
   storeRows: { marginTop: 28 }, storeRow: { minHeight: 68, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: c.border },
@@ -768,7 +854,7 @@ const s = StyleSheet.create({
   emptyList: { alignItems: 'center', justifyContent: 'center', gap: 12, minHeight: 160 },
   navigation: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 52 },
   shareLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6 }, shareText: { fontFamily: f.medium, fontSize: 14, color: c.secondary },
-  syncStatus: { fontFamily: f.regular, fontSize: 11, color: c.muted, marginTop: 4 }, listContent: { paddingHorizontal: 12, paddingBottom: 40 },
+  syncStatus: { fontFamily: f.regular, fontSize: 11, color: c.muted, marginTop: 4 }, listContent: { flexGrow: 1, paddingHorizontal: 12, paddingBottom: 40 },
   group: { paddingBottom: 16, backgroundColor: c.white, borderRadius: 12 },
   dragging: { backgroundColor: c.white, borderRadius: 12, zIndex: 1000, borderWidth: 1, borderColor: c.border, elevation: 24, shadowColor: c.text, shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   itemDragOrigin: { opacity: 0 },

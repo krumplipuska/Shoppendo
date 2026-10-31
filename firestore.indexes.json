@@ -1,0 +1,6 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "shops", "fieldPath": "categories", "indexes": [] }
+  ]
+}
