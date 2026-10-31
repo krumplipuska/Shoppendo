@@ -7,8 +7,7 @@ dist/
 web-build/
 android/
 ios/
-.env.local
-.env.*.local
+
 *.tgz
 *-debug.log
 *.tsbuildinfo
