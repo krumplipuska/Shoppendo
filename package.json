@@ -40,7 +40,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/model.test.mjs",
+    "test": "node --test tests/model.test.mjs tests/links.test.mjs",
     "test:rules": "firebase emulators:exec --only firestore --project demo-shoppendo \"node --test tests/firestore.test.mjs\"",
     "export": "expo export --platform all",
     "emulators": "firebase emulators:start --only auth,firestore --project demo-shoppendo",

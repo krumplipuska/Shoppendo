@@ -10,11 +10,18 @@
     "scheme": "shoppendo",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.tamasbagyinszki.shoppendo.dev"
+      "bundleIdentifier": "com.tamasbagyinszki.shoppendo.dev",
+      "associatedDomains": ["applinks:shoppendo-1a86c.web.app"]
     },
     "android": {
       "package": "com.tamasbagyinszki.shoppendo.dev",
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "intentFilters": [{
+        "action": "VIEW",
+        "autoVerify": true,
+        "data": [{ "scheme": "https", "host": "shoppendo-1a86c.web.app", "pathPrefix": "/join/" }],
+        "category": ["BROWSABLE", "DEFAULT"]
+      }]
     },
     "web": {
       "favicon": "./assets/favicon.png",

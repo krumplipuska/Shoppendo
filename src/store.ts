@@ -14,6 +14,7 @@ const listeners = new Set<() => void>();
 let saveChain: Promise<void> = Promise.resolve();
 let durable = true;
 let syncing: Promise<void> | undefined;
+let syncTimer: ReturnType<typeof setTimeout> | undefined;
 let loaded: Promise<void> | undefined;
 const watchers = new Map<string, () => void>();
 const starting = new Set<string>();
@@ -49,6 +50,7 @@ function limitDone(next: SavedState) {
 
 function persist(next: SavedState) {
   next = limitDone(next);
+  const outboxChanged = next.outbox !== saved.outbox;
   saved = next;
   notify();
   const raw = JSON.stringify(next);
@@ -58,12 +60,19 @@ function persist(next: SavedState) {
     notify({ error: 'Could not save to this device. Keep the app open and free up some storage, then try again.' });
   });
   // Never send a change until its durable local copy exists.
-  void write.then(() => flush()).catch(() => {});
+  void write.then(() => {
+    // Use a bounded window so continuous edits cannot postpone syncing forever.
+    // Remote snapshots and local preferences must not flush pending edits early.
+    if (outboxChanged && saved.outbox.length && !syncTimer) {
+      syncTimer = setTimeout(() => { syncTimer = undefined; void flush(); }, 750);
+    }
+  }).catch(() => {});
   return write;
 }
 
 function update(write: Omit<Write, 'id'>) {
-  void persist(edit(saved, { ...write, id: id() })).catch(() => {});
+  const next = edit(saved, { ...write, id: id() });
+  if (next !== saved) void persist(next).catch(() => {});
 }
 
 export async function load() {
@@ -85,6 +94,8 @@ export async function load() {
 }
 
 export function flush() {
+  clearTimeout(syncTimer);
+  syncTimer = undefined;
   if (!firebaseConfigured || !view.ready) return Promise.resolve();
   if (!saved.outbox.length) { refreshWatchers(); return Promise.resolve(); }
   syncing ??= (async () => {
@@ -230,10 +241,15 @@ export const actions = {
   },
   toggleItem(shopId: string, itemId: string) {
     const item = saved.shops.find(s => s.id === shopId)?.items[itemId];
-    if (item && !item.deleted) update({ shopId, target: 'items', entityId: itemId, data: { done: !item.done, updatedAt: Date.now() } });
+    if (!item || item.deleted) return;
+    const done = !item.done;
+    update({ shopId, target: 'items', entityId: itemId, data: { done, updatedAt: Date.now() } });
+    return done;
   },
   renameItem(shopId: string, itemId: string, input: string) {
-    update({ shopId, target: 'items', entityId: itemId, data: { name: validName(input), updatedAt: Date.now() } });
+    const name = validName(input);
+    if (saved.shops.find(s => s.id === shopId)?.items[itemId]?.name === name) return;
+    update({ shopId, target: 'items', entityId: itemId, data: { name, updatedAt: Date.now() } });
   },
   deleteItem(shopId: string, itemId: string) {
     const item = saved.shops.find(s => s.id === shopId)?.items[itemId];
@@ -282,6 +298,6 @@ export const actions = {
   },
 };
 
-// The saved outbox is retried while the app is open and whenever it returns to the foreground.
+// Retry while active; flush the short batching window on app state transitions.
 setInterval(() => { if (view.ready && AppState.currentState === 'active') void flush(); }, 15000);
-AppState.addEventListener('change', state => { if (state === 'active') { void flush(); refreshWatchers(); } });
+AppState.addEventListener('change', () => { void flush(); });

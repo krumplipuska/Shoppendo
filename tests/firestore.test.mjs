@@ -73,6 +73,28 @@ test('one document listener receives another device checking an item', async () 
   await received;
 });
 
+test('already-applied retries and batches with no final change do not write the document', async () => {
+  const source = { ...shop(), id: 'GHJKLMNPQRSTUVWXYZAB' };
+  await writeShop(alice, 'alice', [], source);
+  const url = `http://127.0.0.1:8080/v1/projects/demo-shoppendo/databases/(default)/documents/shops/${source.id}`;
+  const readVersion = async () => {
+    const response = await fetch(url, { headers: { Authorization: 'Bearer owner' } });
+    assert.equal(response.ok, true);
+    return (await response.json()).updateTime;
+  };
+  const before = await readVersion();
+  await writeShop(alice, 'alice', [write('items', 'apples', { done: false }, source.id)]);
+  await writeShop(alice, 'alice', [write('shop', '', { name: 'Temporary' }, source.id),
+    write('shop', '', { name: source.name }, source.id)]);
+  assert.equal(await readVersion(), before);
+  const patch = write('items', 'apples', { done: true, updatedAt: 2 }, source.id);
+  await writeShop(alice, 'alice', [patch]);
+  const changed = await readVersion();
+  assert.notEqual(changed, before);
+  await writeShop(alice, 'alice', [patch]);
+  assert.equal(await readVersion(), changed);
+});
+
 test('category changes move an item atomically, preserving checks and edits', async () => {
   await writeShop(alice, 'alice', [write('items', 'bananas', { groupId: 'bakery', position: 0.5 })]);
   const data = (await getDoc(doc(bob, 'shops', shopId))).data();

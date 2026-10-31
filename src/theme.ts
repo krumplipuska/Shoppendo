@@ -1,6 +1,6 @@
 export const colors = {
   primary: '#246B4D', primarySoft: '#E7F0E8', secondary: '#B45E45', secondarySoft: '#F8EDE7',
-  text: '#173C31', muted: '#6C786F', border: '#E1E6DD', white: '#FFFFFF', background: '#E7EBE2', danger: '#A13C32',
+  text: '#173C31', muted: '#6C786F', border: '#E1E6DD', white: '#FFFFFF', header: '#F8FAF6', background: '#E7EBE2', danger: '#A13C32',
 };
 export const fonts = {
   regular: 'DMSans_400Regular', medium: 'DMSans_500Medium', semibold: 'DMSans_600SemiBold', bold: 'DMSans_700Bold',

@@ -60,6 +60,12 @@ export function validName(input: string, max = 200) {
 }
 
 export function applyWrite(shop: Shop, write: Write): Shop {
+  const current = write.target === 'shop' ? shop : shop[write.target][write.entityId];
+  if (current && Object.entries(write.data).every(([key, value]) => {
+    const previous = (current as Record<string, unknown>)[key];
+    return Object.is(previous, value) || (Array.isArray(previous) && Array.isArray(value)
+      && previous.length === value.length && previous.every((entry, index) => Object.is(entry, value[index])));
+  })) return shop;
   if (write.target === 'shop') return { ...shop, ...write.data } as Shop;
   const records = shop[write.target];
   return {
@@ -71,9 +77,11 @@ export function applyWrite(shop: Shop, write: Write): Shop {
 export function edit(state: SavedState, write: Write): SavedState {
   const shop = state.shops.find(s => s.id === write.shopId);
   if (!shop) return state;
+  const updated = applyWrite(shop, write);
+  if (updated === shop) return state;
   return {
     ...state,
-    shops: state.shops.map(s => s.id === shop.id ? applyWrite(s, write) : s),
+    shops: state.shops.map(s => s.id === shop.id ? updated : s),
     outbox: shop.shared ? [...state.outbox, write] : state.outbox,
   };
 }

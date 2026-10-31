@@ -80,10 +80,14 @@ export async function writeShop(db: Firestore, uid: string, writes: Write[], loc
     if (snapshot.exists() && !writes.length) { decodeShop(shopId, snapshot.data()); return; }
     let shop: Shop = snapshot.exists() ? decodeShop(shopId, snapshot.data())
       : localShop ?? { id: shopId, name: '', createdAt: 0, groupOrder: [], groups: {}, items: {}, shared: true };
+    const before = snapshot.exists() ? JSON.stringify(encodeShop(shop)) : undefined;
     for (const write of writes) shop = applyWrite(shop, write);
+    const data = encodeShop(shop);
+    // A retry after a lost acknowledgement may already be applied on the server.
+    if (JSON.stringify(data) === before) return;
     // A transaction retries against the latest shop if another device edits it.
     // ponytail: one document has a 1 MiB ceiling; split shops again if lists outgrow it.
-    transaction.set(ref, encodeShop(shop));
+    transaction.set(ref, data);
   });
   try { await commit(); }
   catch (error) {

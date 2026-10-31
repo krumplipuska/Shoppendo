@@ -1,14 +1,14 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type ViewStyle } from 'react-native';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Animated as NativeAnimated, PanResponder, Easing, useWindowDimensions, Keyboard, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View, type KeyboardEvent, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Path, Circle } from 'react-native-svg';
 import { colors as c, fonts as f } from './theme';
 import { type GroupIcon } from './model';
-import { deleteSwipeProgress } from './interaction';
+import { backSwipeDirection, deleteSwipeProgress, keyboardOverlap } from './interaction';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-worklets';
-import Animated, { ReduceMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
+import Animated, { ReduceMotion, useReducedMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
 
-export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'copy' | 'close' | 'trash' | 'more' | GroupIcon;
+export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'copy' | 'close' | 'trash' | 'more' | 'groupSort' | GroupIcon;
 export type InputHandle = React.ComponentRef<typeof TextInput>;
 type Dismiss = () => void | boolean;
 const EditingContext = createContext<Map<symbol, Dismiss> | null>(null);
@@ -26,7 +26,7 @@ export function EditingSurface({ children }: { children: React.ReactNode }) {
   const dismiss = () => { dismissOutside(editors); Keyboard.dismiss(); };
   return <EditingContext value={editors}><View style={{ flex: 1 }} onTouchStart={dismiss} onPointerDown={Platform.OS === 'web' ? dismiss : undefined}>{children}</View></EditingContext>;
 }
-export function EditingRegion({ children, onDismiss }: { children: React.ReactNode; onDismiss?: Dismiss }) {
+export function EditingRegion({ children, onDismiss, style }: { children: React.ReactNode; onDismiss?: Dismiss; style?: StyleProp<ViewStyle> }) {
   const editors = useContext(EditingContext);
   const ancestors = useContext(ProtectedRegions);
   const key = useRef(Symbol()).current;
@@ -40,7 +40,7 @@ export function EditingRegion({ children, onDismiss }: { children: React.ReactNo
     event.stopPropagation();
     if (editors) dismissOutside(editors, [...ancestors, key]);
   };
-  return <ProtectedRegions value={[...ancestors, key]}><View onTouchStart={protect} onPointerDown={Platform.OS === 'web' ? protect : undefined}>{children}</View></ProtectedRegions>;
+  return <ProtectedRegions value={[...ancestors, key]}><View style={style} onTouchStart={protect} onPointerDown={Platform.OS === 'web' ? protect : undefined}>{children}</View></ProtectedRegions>;
 }
 export function useFinishEditing() {
   const editors = useContext(EditingContext);
@@ -53,6 +53,7 @@ export function useFinishEditing() {
 const paths: Record<Exclude<IconName, 'more'>, string> = {
   copy: 'M9 9h12v12H9V9ZM5 15H3V3h12v2',
   trash: 'M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7',
+  groupSort: 'M4 5v14m-3-3 3 3 3-3M10 5h11M10 12h8M10 19h5',
   plus: 'M12 5v14M5 12h14', check: 'm5 12 4 4L19 6', back: 'm14 5-7 7 7 7', down: 'm7 10 5 5 5-5', right: 'm9 6 6 6-6 6',
   share: 'M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8', close: 'm6 6 12 12M6 18 18 6', bag: 'M5 7h14l1 14H4L5 7ZM8 8V6a4 4 0 0 1 8 0v2',
   fruit: 'M12 8c-6-5-11 1-8 8 2 5 5 6 8 4 3 2 6 1 8-4 3-7-2-13-8-8Zm0 0V4m0 1c1-3 4-3 6-2-1 3-3 4-6 2Z',
@@ -87,14 +88,15 @@ const paths: Record<Exclude<IconName, 'more'>, string> = {
   baby: 'M12 5c13 0 13 17 0 17S-1 5 12 5Zm0 0c-4-5 4-5 3-1M7 12h.01M17 12h.01M8 16c2 3 6 3 8 0',
   medicine: 'M7 3c-4 0-4 6 0 6h10c4 0 4-6 0-6H7Zm5 0v6M4 13h16v9H4v-9Zm8 2v5m-3-2h6',
 };
-export function Icon({ name, color = c.primary, size = 22 }: { name: IconName; color?: string; size?: number }) {
+export function Icon({ name, color = c.primary, size = 22, solid = false }: { name: IconName; color?: string; size?: number; solid?: boolean }) {
   return <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    {name === 'more' ? [5, 12, 19].map(x => <Circle key={x} cx={x} cy={12} r={1} />) : <Path d={paths[name]} />}
+    {name === 'share' ? <><Path d="m8.6 10.5 6.8-4m-6.8 7 6.8 4" />{[[6, 12], [18, 5], [18, 19]].map(([x, y]) => <Circle key={y} cx={x} cy={y} r={3} fill={solid ? color : 'none'} />)}</>
+      : name === 'more' ? [5, 12, 19].map(x => <Circle key={x} cx={x} cy={12} r={1} />) : <Path d={paths[name]} />}
   </Svg>;
 }
 
 export function SwipeToDelete({ children, label, onDelete, disabled = false, onSwipeStart, onSwipeEnd }: {
-  children: (action: (normal?: React.ReactNode) => React.ReactNode) => React.ReactNode; label: string; onDelete: () => void;
+  children: (action: (normal?: React.ReactNode, style?: StyleProp<ViewStyle>) => React.ReactNode) => React.ReactNode; label: string; onDelete: () => void;
   disabled?: boolean; onSwipeStart?: () => void; onSwipeEnd?: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -117,9 +119,9 @@ export function SwipeToDelete({ children, label, onDelete, disabled = false, onS
   });
   const normalStyle = useAnimatedStyle(() => ({ opacity: 1 - progress.value }));
   const deleteStyle = useAnimatedStyle(() => ({ opacity: progress.value, transform: [{ scale: 0.85 + progress.value * 0.15 }] }));
-  const action = (normal?: React.ReactNode) => <View style={ui.actionSlot}>
-    <Animated.View style={[StyleSheet.absoluteFill, normalStyle]} pointerEvents={open ? 'none' : 'auto'} accessibilityElementsHidden={open} importantForAccessibility={open ? 'no-hide-descendants' : 'auto'} aria-hidden={open}>{normal}</Animated.View>
-    <Animated.View style={[StyleSheet.absoluteFill, deleteStyle]} pointerEvents={open ? 'auto' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'} aria-hidden={!open}>
+  const action = (normal?: React.ReactNode, style?: StyleProp<ViewStyle>) => <View style={[ui.actionSlot, style]}>
+    <Animated.View style={normalStyle} pointerEvents={open ? 'none' : 'auto'} accessibilityElementsHidden={open} importantForAccessibility={open ? 'no-hide-descendants' : 'auto'} aria-hidden={open}>{normal}</Animated.View>
+    <Animated.View style={[StyleSheet.absoluteFill, { alignItems: 'flex-end', justifyContent: 'center' }, deleteStyle]} pointerEvents={open ? 'auto' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'} aria-hidden={!open}>
       <EditingRegion onDismiss={visible ? reset : undefined}>
         <IconButton icon="trash" filled color={c.danger} disabled={!open} label={`Delete ${label}`} onPress={() => { reset(); onDelete(); }} />
       </EditingRegion>
@@ -128,12 +130,12 @@ export function SwipeToDelete({ children, label, onDelete, disabled = false, onS
   return <GestureDetector gesture={gesture} touchAction="pan-y"><View>{children(action)}</View></GestureDetector>;
 }
 
-export function IconButton({ icon, label, onPress, filled = false, disabled = false, color = c.primary, style }: {
-  icon: IconName; label: string; onPress: () => void; filled?: boolean; disabled?: boolean; color?: string; style?: StyleProp<ViewStyle>;
+export function IconButton({ icon, label, onPress, filled = false, solid = false, disabled = false, color = c.primary, style }: {
+  icon: IconName; label: string; onPress: () => void; filled?: boolean; solid?: boolean; disabled?: boolean; color?: string; style?: StyleProp<ViewStyle>;
 }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress}
     style={({ pressed }) => [ui.iconButton, filled && { backgroundColor: color }, pressed && { opacity: 0.7 }, disabled && { opacity: 0.4 }, style]}>
-    <Icon name={icon} color={filled ? c.white : color} />
+    <Icon name={icon} color={filled ? c.white : color} solid={solid} />
   </Pressable>;
 }
 
@@ -178,17 +180,89 @@ export function InlineInput({ placeholder, label, onAdd, autoFocus, initial = ''
   </EditingRegion>;
 }
 
-export function Sheet({ visible, title, children, onClose }: { visible: boolean; title: string; children: React.ReactNode; onClose: () => void }) {
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-    <View style={ui.modalRoot}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close dialog" accessibilityRole="button" />
-      <View accessibilityViewIsModal style={ui.sheet}>
-        <View style={ui.grabber} />
-        <View style={ui.sheetHeading}><Text accessibilityRole="header" style={ui.sheetTitle}>{title}</Text><IconButton icon="close" label="Close" onPress={onClose} /></View>
-        {children}
-      </View>
+export function Sheet({ visible, title, children, onClose, onShow, compact = false, canSwipeDown }: {
+  visible: boolean; title: string; children: React.ReactNode; onClose: () => void; onShow?: () => void;
+  compact?: boolean; canSwipeDown?: () => boolean;
+}) {
+  const { height } = useWindowDimensions();
+  const reducedMotion = useReducedMotion();
+  const offset = useRef(new NativeAnimated.Value(height)).current;
+  const dim = useRef(new NativeAnimated.Value(0)).current;
+  const keyboardGap = useRef(new NativeAnimated.Value(0)).current;
+  const viewportBottom = useRef(height);
+  const modalFrame = useRef<React.ComponentRef<typeof View>>(null);
+  const keyboardTarget = useRef(0);
+  const updateKeyboard = useCallback((metrics?: { screenY: number; height: number } | null, duration = 0) => {
+    const next = keyboardOverlap(viewportBottom.current, metrics);
+    if (next === keyboardTarget.current) return;
+    keyboardTarget.current = next;
+    NativeAnimated.timing(keyboardGap, { toValue: next, duration: reducedMotion ? 0 : duration, easing: Easing.inOut(Easing.ease), useNativeDriver: false }).start();
+  }, [keyboardGap, reducedMotion]);
+  useEffect(() => {
+    const change = (event: KeyboardEvent) => updateKeyboard(event.endCoordinates, event.duration);
+    const hide = (event: KeyboardEvent) => updateKeyboard(undefined, event.duration);
+    const listeners = [Keyboard.addListener('keyboardWillChangeFrame', change), Keyboard.addListener('keyboardDidShow', change),
+      Keyboard.addListener('keyboardWillHide', hide), Keyboard.addListener('keyboardDidHide', hide)];
+    updateKeyboard(Keyboard.metrics?.());
+    return () => { listeners.forEach(listener => listener.remove()); keyboardGap.stopAnimation(); };
+  }, [updateKeyboard, keyboardGap]);
+  const closing = useRef(false);
+  const latest = useRef({ onClose, onShow, compact, canSwipeDown, height, reducedMotion });
+  latest.current = { onClose, onShow, compact, canSwipeDown, height, reducedMotion };
+  const dismiss = useRef(() => {});
+  dismiss.current = () => {
+    if (closing.current) return;
+    closing.current = true;
+    NativeAnimated.parallel([
+      NativeAnimated.timing(dim, { toValue: 0, duration: reducedMotion ? 0 : 180, useNativeDriver: true }),
+      NativeAnimated.timing(offset, { toValue: height, duration: reducedMotion ? 0 : 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+    ]).start(({ finished }) => { if (finished) latest.current.onClose(); });
+  };
+  const show = () => {
+    closing.current = false; offset.setValue(height); dim.setValue(0);
+    updateKeyboard(Keyboard.metrics?.());
+    latest.current.onShow?.();
+    NativeAnimated.parallel([
+      NativeAnimated.timing(dim, { toValue: 1, duration: reducedMotion ? 0 : 180, useNativeDriver: true }),
+      NativeAnimated.timing(offset, { toValue: 0, duration: reducedMotion ? 0 : 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start();
+  };
+  const reset = () => NativeAnimated.timing(offset, { toValue: 0, duration: latest.current.reducedMotion ? 0 : 160, useNativeDriver: true }).start();
+  const pan = useRef(PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_, { dx, dy }) => !closing.current && latest.current.compact && dy > 12 && dy > Math.abs(dx) * 1.5 && (latest.current.canSwipeDown?.() ?? true),
+    onPanResponderGrant: () => offset.stopAnimation(),
+    onPanResponderMove: (_, { dy }) => offset.setValue(Math.max(0, dy)),
+    onPanResponderRelease: (_, { dy, vy }) => {
+      if (backSwipeDirection(0, dy, 0, vy * 1000) === 'down') dismiss.current();
+      else reset();
+    },
+    onPanResponderTerminate: reset,
+  })).current;
+  useEffect(() => () => { offset.stopAnimation(); dim.stopAnimation(); }, [offset, dim]);
+  return <Modal visible={visible} transparent animationType="none" onRequestClose={() => dismiss.current()} onShow={show}>
+    <View ref={modalFrame} collapsable={false} style={ui.modalRoot} onLayout={() => modalFrame.current?.measureInWindow((_, y, __, frameHeight) => {
+      viewportBottom.current = y + frameHeight; const metrics = Keyboard.metrics?.(); if (metrics) updateKeyboard(metrics);
+    })}>
+      <NativeAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, ui.backdrop, { opacity: dim }]} />
+      <Pressable style={StyleSheet.absoluteFill} onPress={() => dismiss.current()} accessibilityLabel="Close dialog" accessibilityRole="button" />
+      <NativeAnimated.View pointerEvents="box-none" style={[ui.sheetPosition, { bottom: keyboardGap }]}>
+        <NativeAnimated.View {...pan.panHandlers} accessibilityViewIsModal style={[ui.sheet, compact && ui.compactSheet, { transform: [{ translateY: offset }] }]}>
+          <View style={[ui.grabber, compact && { marginBottom: 0 }]} />
+          <View style={ui.sheetHeading}><Text accessibilityRole="header" style={ui.sheetTitle}>{title}</Text><IconButton icon="close" label="Close" onPress={() => dismiss.current()} /></View>
+          {children}
+        </NativeAnimated.View>
+      </NativeAnimated.View>
     </View>
   </Modal>;
+}
+
+export function FloatingAddButton({ label, accessibilityLabel = label, onPress, disabled = false }: {
+  label: string; accessibilityLabel?: string; onPress: () => void; disabled?: boolean;
+}) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel} disabled={disabled} onPress={onPress}
+    style={({ pressed }) => [ui.floatingAdd, pressed && { opacity: 0.8 }, disabled && { opacity: 0.4 }]}>
+    <Icon name="plus" color={c.white} /><Text style={ui.buttonText}>{label}</Text>
+  </Pressable>;
 }
 
 export const ui = StyleSheet.create({
@@ -199,8 +273,12 @@ export const ui = StyleSheet.create({
   inline: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: c.border, minHeight: 56, gap: 8 },
   input: { flex: 1, fontFamily: f.regular, fontSize: 16, color: c.text, paddingVertical: 13, minHeight: 48, paddingHorizontal: 8, ...Platform.select({ web: { outlineStyle: 'none' as never } }) },
   errorText: { color: c.danger, fontFamily: f.regular, fontSize: 12, lineHeight: 18, marginTop: 6 },
-  modalRoot: { flex: 1, backgroundColor: '#0D201840', justifyContent: 'flex-end', alignItems: 'center' },
-  sheet: { width: '100%', maxWidth: 520, backgroundColor: c.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 40, gap: 14 },
+  modalRoot: { flex: 1 },
+  backdrop: { backgroundColor: '#0D201840' },
+  sheetPosition: { position: 'absolute', top: 0, left: 0, right: 0, justifyContent: 'flex-end', alignItems: 'center' },
+  floatingAdd: { position: 'absolute', right: 20, bottom: 20, minHeight: 56, paddingHorizontal: 20, borderRadius: 28, backgroundColor: c.primary, flexDirection: 'row', alignItems: 'center', gap: 8, elevation: 8, shadowColor: c.text, shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+  sheet: { width: '100%', maxWidth: 520, maxHeight: '90%', backgroundColor: c.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 40, gap: 14 },
+  compactSheet: { maxHeight: '65%', paddingBottom: 16, gap: 8 },
   grabber: { width: 40, height: 4, borderRadius: 4, backgroundColor: c.border, alignSelf: 'center', marginBottom: 8 },
   sheetHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
   sheetTitle: { flex: 1, fontFamily: f.bold, fontSize: 23, lineHeight: 30, color: c.text },
