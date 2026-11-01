@@ -9,16 +9,14 @@ import { edgeVelocity, HOLD_MS, previewOrder, rowTop, sameOrder, type Heights } 
 const AnimatedScroll = Animated.createAnimatedComponent(ScrollView);
 const timing = { duration: 150, reduceMotion: ReduceMotion.System };
 const spring = { damping: 30, stiffness: 320, overshootClamping: true, reduceMotion: ReduceMotion.System };
-type ControlRef = AnimatedRef<View>;
 type ScrollInstance = React.ComponentRef<typeof RNScrollView>;
-const Controls = createContext<((ref: ControlRef) => () => void) | null>(null);
+const ReorderSurface = createContext(false);
 
-/** Explicit controls remain tappable but cannot initiate a row drag. */
-export function ReorderControl({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  const register = useContext(Controls);
-  const ref = useAnimatedRef<View>();
-  useLayoutEffect(() => register?.(ref), [register, ref]);
-  return <Animated.View ref={ref} collapsable={false} style={style}>{children}</Animated.View>;
+/** A handled long press suppresses the control's release tap, without blocking
+ * the ancestor drag recognizer. Short taps keep their normal behavior. */
+export function useReorderTap() {
+  const inRow = useContext(ReorderSurface);
+  return inRow ? { onLongPress: () => {}, delayLongPress: HOLD_MS } : {};
 }
 
 export type ReorderDrop = { id: string; order: string[]; from: number; to: number };
@@ -142,11 +140,6 @@ type RowContext = {
 };
 function ReorderRow({ id, children, enabled, context }: { id: string; children: ReactNode; enabled: boolean; context: RowContext }) {
   const { order, original, heights, active, phase, finger, grab, dragTop, scale, scrollY, viewport, rowsOffset, scroll, rows, begin, settle } = context;
-  const [controls, setControls] = useState<ControlRef[]>([]);
-  const register = useCallback((ref: ControlRef) => {
-    setControls(current => [...current, ref]);
-    return () => setControls(current => current.filter(value => value !== ref));
-  }, []);
   const y = useSharedValue(0);
   useAnimatedReaction(() => ({ top: rowTop(order.value, heights.value, id), phase: phase.value }), (value, previous) => {
     if (value.top !== previous?.top || value.phase !== previous?.phase) y.value = value.phase ? withTiming(value.top, timing) : value.top;
@@ -159,14 +152,6 @@ function ReorderRow({ id, children, enabled, context }: { id: string; children: 
       if (phase.value !== 0) {
         if (active.value === id) settle(true);
         GestureStateManager.fail(event.handlerTag); return;
-      }
-      const touch = event.allTouches[0];
-      if (!touch) return;
-      for (const ref of controls) {
-        const bounds = measure(ref);
-        if (bounds && touch.absoluteX >= bounds.pageX && touch.absoluteX <= bounds.pageX + bounds.width && touch.absoluteY >= bounds.pageY && touch.absoluteY <= bounds.pageY + bounds.height) {
-          GestureStateManager.fail(event.handlerTag); return;
-        }
       }
     },
     onActivate: event => {
@@ -196,15 +181,15 @@ function ReorderRow({ id, children, enabled, context }: { id: string; children: 
       zIndex: lifted ? 100 : 0, elevation: lifted ? 12 : 0,
       shadowOpacity: lifted ? 0.15 * Math.max(0, (scale.value - 1) / 0.03) : 0 };
   });
-  return <Controls.Provider value={register}><GestureDetector gesture={gesture} touchAction="pan-y">
-    <Animated.View style={[styles.row, style]} collapsable={false} onLayout={event => {
+  return <ReorderSurface.Provider value={enabled}><GestureDetector gesture={gesture} touchAction="pan-y">
+    <Animated.View pointerEvents="auto" style={[styles.row, style]} collapsable={false} onLayout={event => {
       const height = event.nativeEvent.layout.height;
       if (height > 0 && heights.value[id] !== height) {
         if (phase.value === 1) runOnUI(settle)(true);
         heights.value = { ...heights.value, [id]: height };
       }
     }}>{children}</Animated.View>
-  </GestureDetector></Controls.Provider>;
+  </GestureDetector></ReorderSurface.Provider>;
 }
 
 const styles = StyleSheet.create({

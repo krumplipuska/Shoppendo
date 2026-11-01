@@ -6,7 +6,7 @@ import { type GroupIcon } from './model';
 import { backSwipeDirection, deleteSwipeProgress, keyboardOverlap } from './interaction';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-worklets';
-import { ReorderControl } from './reorder-list';
+import { useReorderTap } from './reorder-list';
 import Animated, { ReduceMotion, useReducedMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
 
 export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'stop' | 'copy' | 'close' | 'trash' | 'more' | 'groupSort' | GroupIcon;
@@ -125,7 +125,7 @@ export function SwipeToDelete({ children, label, onDelete, disabled = false, onS
     <Animated.View style={normalStyle} pointerEvents={open ? 'none' : 'auto'} accessibilityElementsHidden={open} importantForAccessibility={open ? 'no-hide-descendants' : 'auto'} aria-hidden={open}>{normal}</Animated.View>
     <Animated.View style={[StyleSheet.absoluteFill, { alignItems: 'flex-end', justifyContent: 'center' }, deleteStyle]} pointerEvents={open ? 'auto' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'} aria-hidden={!open}>
       <EditingRegion onDismiss={visible ? reset : undefined}>
-        <ReorderControl><IconButton icon="trash" filled color={c.danger} disabled={!open} label={`Delete ${label}`} onPress={() => { reset(); onDelete(); }} /></ReorderControl>
+        <IconButton icon="trash" filled color={c.danger} disabled={!open} label={`Delete ${label}`} onPress={() => { reset(); onDelete(); }} />
       </EditingRegion>
     </Animated.View>
   </View>;
@@ -135,7 +135,8 @@ export function SwipeToDelete({ children, label, onDelete, disabled = false, onS
 export function IconButton({ icon, label, onPress, filled = false, solid = false, disabled = false, color = c.primary, style }: {
   icon: IconName; label: string; onPress: () => void; filled?: boolean; solid?: boolean; disabled?: boolean; color?: string; style?: StyleProp<ViewStyle>;
 }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress}
+  const reorderTap = useReorderTap();
+  return <Pressable {...reorderTap} accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress}
     style={({ pressed }) => [ui.iconButton, filled && { backgroundColor: color }, pressed && { opacity: 0.7 }, disabled && { opacity: 0.4 }, style]}>
     <Icon name={icon} color={filled ? c.white : color} solid={solid} />
   </Pressable>;

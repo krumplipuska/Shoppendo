@@ -13,7 +13,7 @@ import { colors as c, fonts as f, entityTone } from './src/theme';
 
 import { runOnJS } from 'react-native-worklets';
 import { backSwipeDirection, swipeAxis, shouldStartListPull } from './src/interaction';
-import { ReorderList, ReorderControl } from './src/reorder-list';
+import { ReorderList, useReorderTap } from './src/reorder-list';
 import { HOLD_MS as DRAG_DELAY } from './src/reorder';
 import { shopLink, shopCodeFromLink } from './src/links';
 
@@ -45,6 +45,7 @@ function ItemCategory({ shop, groupId }: { shop: Shop; groupId: string }) {
 
 function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = true }: { shop: Shop; id: string; item: Item; toggle: () => void; showCategory?: boolean; manualOrder?: boolean }) {
   const editItem = useContext(ItemEditorContext);
+  const reorderTap = useReorderTap();
   const move = (direction: number) => {
     if (!manualOrder) return;
     const ids = activeItems(shop, item.groupId).map(([key]) => key);
@@ -55,10 +56,10 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
   };
   return <SwipeToDelete label={item.name} onDelete={() => actions.deleteItem(shop.id, id)}>{action =>
     <View style={s.item}>
-      <ReorderControl><Pressable accessibilityRole="checkbox" accessibilityLabel={`${item.name}, ${item.done ? 'picked up' : 'to get'}`} accessibilityState={{ checked: item.done }}
+      <Pressable {...reorderTap} accessibilityRole="checkbox" accessibilityLabel={`${item.name}, ${item.done ? 'picked up' : 'to get'}`} accessibilityState={{ checked: item.done }}
         onPress={toggle} style={s.checkboxTarget}>
         <View style={[s.checkbox, item.done && s.checked]}>{item.done && <Icon name="check" size={15} color={c.white} />}</View>
-      </Pressable></ReorderControl>
+      </Pressable>
       <Pressable style={[s.flex, s.itemNameTarget]} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}
         accessibilityHint={manualOrder && !item.done ? 'Tap to edit. Hold to move. Swipe left to delete.' : 'Tap to edit. Swipe left to delete.'}
         accessibilityActions={[{ name: 'delete', label: 'Delete item' }, { name: 'increment', label: 'Move item later' }, { name: 'decrement', label: 'Move item earlier' }]}
@@ -67,10 +68,10 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
         onPress={() => editItem(id)} onLongPress={() => {}} delayLongPress={DRAG_DELAY}>
         <Text style={[s.itemName, item.done && s.doneName]}>{item.name}</Text>
       </Pressable>
-      {action(showCategory && <ReorderControl><Pressable accessibilityRole="button" accessibilityLabel={`Change category for ${item.name}`}
+      {action(showCategory && <Pressable {...reorderTap} accessibilityRole="button" accessibilityLabel={`Change category for ${item.name}`}
         accessibilityHint={`Current category: ${shop.groups[item.groupId]?.name ?? 'Unknown'}`} style={{ minHeight: 60, justifyContent: 'center' }} onPress={() => editItem(id)}>
         <ItemCategory shop={shop} groupId={item.groupId} />
-      </Pressable></ReorderControl>, s.itemCategoryAction)}
+      </Pressable>, s.itemCategoryAction)}
     </View>}
   </SwipeToDelete>;
 }
@@ -158,8 +159,8 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
           onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.key === 'F2') edit(); else if (key.altKey && ['ArrowUp', 'ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}>
           <Text numberOfLines={1} style={s.storeName}>{shop.name}</Text>
         </Pressable>
-        <ReorderControl><IconButton icon="share" color={tone.color} solid={shop.shared} label={`Share ${shop.name}${shop.shared ? ', shared store' : ''}`} onPress={share} /></ReorderControl>
-        {action(<ReorderControl><IconButton icon="right" color={tone.color} label={`Open ${shop.name}`} onPress={() => open(shop.id)} /></ReorderControl>)}
+        <IconButton icon="share" color={tone.color} solid={shop.shared} label={`Share ${shop.name}${shop.shared ? ', shared store' : ''}`} onPress={share} />
+        {action(<IconButton icon="right" color={tone.color} label={`Open ${shop.name}`} onPress={() => open(shop.id)} />)}
       </View>}
     </SwipeToDelete>;
 }
