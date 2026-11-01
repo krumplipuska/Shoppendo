@@ -107,6 +107,28 @@ export function acknowledge(state: SavedState, writeIds: string[]): SavedState {
   return { ...state, outbox: state.outbox.filter(w => !sent.has(w.id)) };
 }
 
+// A network acknowledgement can precede the listener echo. Keep only the latest
+// unobserved field values until that echo arrives, including across rapid saves.
+export function unobservedWrites(writes: Write[], remote?: Shop): Write[] {
+  const latest = new Map<string, Write>();
+  for (const write of writes) {
+    const key = `${write.target}:${write.entityId}`;
+    latest.set(key, { ...write, data: { ...latest.get(key)?.data, ...write.data } });
+  }
+  return [...latest.values()].flatMap(write => {
+    const current = remote && (write.target === 'shop' ? remote : remote[write.target][write.entityId]);
+    // A newer item edit can supersede our acknowledgement before a listener
+    // delivers the intermediate snapshot. Do not mask another device's edit.
+    if (write.target === 'items' && current && typeof write.data.updatedAt === 'number'
+      && (current as Item).updatedAt > write.data.updatedAt) return [];
+    const data = Object.fromEntries(Object.entries(write.data).filter(([key, value]) => {
+      const observed = (current as Record<string, unknown> | undefined)?.[key];
+      return JSON.stringify(observed) !== JSON.stringify(value);
+    }));
+    return Object.keys(data).length ? [{ ...write, data }] : [];
+  });
+}
+
 export function orderedGroups(shop: Shop) {
   const known = new Set(shop.groupOrder);
   return [...shop.groupOrder.filter(id => shop.groups[id]), ...Object.keys(shop.groups).filter(id => !known.has(id))]
@@ -120,6 +142,7 @@ export function mergeCategoryOrder(current: string[], draft: string[]) {
 }
 
 export function reorderShops(shops: Shop[], order: string[]) {
+  if (shops.every((shop, index) => shop.id === order[index]) && shops.length === order.length) return shops;
   if (order.length !== shops.length || new Set(order).size !== shops.length || order.some(id => !shops.some(shop => shop.id === id))) return shops;
   const byId = new Map(shops.map(shop => [shop.id, shop]));
   return order.map(id => byId.get(id)!);
@@ -172,6 +195,7 @@ export function planItemMove(shop: Shop, itemId: string, groupId: string, before
   const items = activeItems(shop, groupId).filter(([id]) => id !== itemId);
   const index = beforeId === null ? items.length : items.findIndex(([id]) => id === beforeId);
   if (index < 0) return {};
+  if (item.groupId === groupId && !item.done && activeItems(shop, groupId)[index]?.[0] === itemId) return {};
   const left = items[index - 1]?.[1]; const right = items[index]?.[1];
   const low = left ? left.position ?? left.createdAt : undefined;
   const high = right ? right.position ?? right.createdAt : undefined;

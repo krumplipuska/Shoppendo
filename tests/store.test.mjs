@@ -6,7 +6,8 @@ import { emptyState } from '../src/model.ts';
 test('sync batches durable edits, ignores snapshot/preferences, and supports immediate flush and retry', async t => {
   const shop = { id: 'ABCDEFGHJKLMNPQRSTUV', name: 'Market', createdAt: 1, shared: true,
     groupOrder: ['fruit'], groups: { fruit: { name: 'Fruit', createdAt: 1 } },
-    items: { apple: { name: 'Apple', groupId: 'fruit', done: false, deleted: false, createdAt: 1, updatedAt: 1 } } };
+    items: { apple: { name: 'Apple', groupId: 'fruit', position: 1, done: false, deleted: false, createdAt: 1, updatedAt: 1 },
+      pear: { name: 'Pear', groupId: 'fruit', position: 2, done: false, deleted: false, createdAt: 2, updatedAt: 2 } } };
   const state = globalThis.storeTest = {
     raw: JSON.stringify({ ...emptyState(), shops: [shop] }), sends: [], failSave: false,
     async save(raw) { if (this.failSave) throw new Error('Disk full'); this.raw = raw; },
@@ -19,7 +20,7 @@ test('sync batches durable edits, ignores snapshot/preferences, and supports imm
     'expo-crypto': 'export const randomUUID = () => globalThis.crypto.randomUUID();',
     'react-native': `export const AppState = { currentState: 'active', addEventListener: (_, fn) => { globalThis.storeTest.onAppState = fn; } };`,
     './firebase': `export const firebaseConfigured = true;
-      export const sendWrites = async writes => { globalThis.storeTest.sends.push(writes); };
+      export const sendWrites = async writes => { globalThis.storeTest.sends.push(writes); await globalThis.storeTest.send?.(); };
       export const watchShop = async (_, receive) => { globalThis.storeTest.receive = receive; return () => {}; };
       export const publishShop = async () => {};
       export const joinRemote = async () => {};
@@ -79,4 +80,56 @@ test('sync batches durable edits, ignores snapshot/preferences, and supports imm
   assert.equal(actions.toggleItem(shop.id, 'apple'), false, 'a second tap uses the latest store state before a render');
   await settle(); t.mock.timers.tick(1000); await settle();
   assert.equal(JSON.parse(state.raw).shops[0].items.apple.done, false, 'rapid unchecking stays active after the move delay');
+
+  const count = state.sends.length;
+  const before = JSON.parse(state.raw);
+  actions.beginDrag();
+  state.receive('shop', { ...shop, name: 'Remote name' });
+  t.mock.timers.tick(20000); await settle(); await flush();
+  assert.equal(state.sends.length, count, 'holding/preview never sends a batch');
+  assert.equal(JSON.parse(state.raw).shops[0].name, before.shops[0].name, 'snapshots cannot change drag geometry');
+  actions.endDrag(); await settle();
+  assert.equal(JSON.parse(state.raw).shops[0].name, 'Remote name', 'cancel/unmount releases buffered snapshots');
+
+  actions.beginDrag();
+  actions.moveItem(shop.id, 'apple', 'fruit', null);
+  await settle(); await flush();
+  assert.equal(state.sends.length, count, 'the completed local order waits until drag cleanup');
+  const moved = JSON.parse(state.raw).shops[0].items.apple.position;
+  assert.ok(moved > 2);
+  actions.endDrag(); await flush(); await settle();
+  assert.equal(state.sends.length, count + 1);
+  assert.equal(state.sends.at(-1).length, 1, 'one changed item, one batch');
+  state.receive('shop', shop); await settle();
+  assert.equal(JSON.parse(state.raw).shops[0].items.apple.position, moved, 'late old snapshot after ack cannot revert the drop');
+  const echoed = structuredClone(JSON.parse(state.raw).shops[0]);
+  state.receive('shop', echoed); await settle();
+  actions.moveItem(shop.id, 'apple', 'fruit', null);
+  await settle(); await flush();
+  assert.equal(state.sends.length, count + 1, 'unchanged drop performs no write');
+
+  let resolveSend;
+  state.send = () => new Promise(resolve => { resolveSend = resolve; });
+  actions.moveItem(shop.id, 'apple', 'fruit', 'pear'); await settle();
+  const inFlight = flush(); await settle();
+  actions.beginDrag();
+  actions.moveItem(shop.id, 'apple', 'fruit', null); await settle();
+  resolveSend(); await inFlight; await settle();
+  assert.equal(state.sends.length, count + 2, 'an in-flight save does not start another batch during a drag');
+  assert.equal(JSON.parse(state.raw).outbox.length, 1, 'newer drop survives the older acknowledgement');
+  state.send = undefined;
+  actions.endDrag(); await flush(); await settle();
+  assert.equal(state.sends.length, count + 3);
+  assert.equal(JSON.parse(state.raw).outbox.length, 0);
+
+  state.send = () => { throw new Error('Offline'); };
+  actions.moveItem(shop.id, 'apple', 'fruit', 'pear'); await settle(); await flush();
+  const failed = JSON.parse(state.raw);
+  assert.equal(failed.outbox.length, 1);
+  assert.ok(failed.shops[0].items.apple.position < failed.shops[0].items.pear.position, 'failure retains the final local order');
+  state.receive('shop', shop); await settle();
+  assert.equal(JSON.parse(state.raw).shops[0].items.apple.position, failed.shops[0].items.apple.position);
+  state.send = undefined;
+  await actions.retry(); await settle();
+  assert.equal(JSON.parse(state.raw).outbox.length, 0, 'retry acknowledges the durable reorder');
 });

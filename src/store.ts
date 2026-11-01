@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import { AppState } from 'react-native';
 import { useSyncExternalStore } from 'react';
-import { acknowledge, CODE_ALPHABET, decodeSaved, edit, emptyState, mergeRemote, normalizeCode,
+import { acknowledge, CODE_ALPHABET, decodeSaved, edit, emptyState, mergeRemote, normalizeCode, unobservedWrites,
   activeItems, doneOverflow, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, GROUP_ICONS, validName, type GroupIcon, type ItemSort, type SavedState, type Shop, type Write } from './model';
 import { firebaseConfigured, joinRemote, publishShop, sendWrites, watchShop, stopSharing } from './firebase';
 
@@ -49,6 +49,20 @@ function limitDone(next: SavedState) {
 }
 
 let dragDepth = 0;
+const remoteSeen = new Map<string, Shop>();
+const awaitingEcho = new Map<string, Write[]>();
+const deferredSnapshots = new Map<string, { shopId: string; target: Write['target']; data: Record<string, unknown> }>();
+
+function receiveSnapshot(shopId: string, target: Write['target'], data: Record<string, unknown>) {
+  if (target === 'shop' && data.items && data.groups) {
+    remoteSeen.set(shopId, data as Shop);
+    awaitingEcho.set(shopId, unobservedWrites(awaitingEcho.get(shopId) ?? [], data as Shop));
+  }
+  if (dragDepth) { deferredSnapshots.set(`${shopId}:${target}`, { shopId, target, data }); return; }
+  const protectedState = { ...saved, outbox: [...(awaitingEcho.get(shopId) ?? []), ...saved.outbox] };
+  const merged = mergeRemote(protectedState, shopId, target, data);
+  void persist({ ...merged, outbox: saved.outbox }).catch(() => {});
+}
 
 function scheduleFlush(delay = 750) {
   if (dragDepth > 0 || syncTimer) return;
@@ -106,14 +120,15 @@ export function flush() {
   if (!saved.outbox.length) { refreshWatchers(); return Promise.resolve(); }
   syncing ??= (async () => {
     try {
-      while (saved.outbox.length) {
+      while (saved.outbox.length && dragDepth === 0) {
         const firstShop = saved.outbox[0].shopId;
         // All pending edits for one shop become one document write.
         const batch = saved.outbox.filter(w => w.shopId === firstShop);
         await saveChain;
-        if (!durable) break;
+        if (!durable || dragDepth > 0) break;
         notify({ syncing: true });
         await sendWrites(batch, saved.shops.find(shop => shop.id === firstShop));
+        awaitingEcho.set(firstShop, unobservedWrites([...(awaitingEcho.get(firstShop) ?? []), ...batch], remoteSeen.get(firstShop)));
         // Writes added during the network request must remain in the outbox.
         await persist(acknowledge(saved, batch.map(w => w.id)));
       }
@@ -139,7 +154,7 @@ function refreshWatchers() {
     if (watchers.has(shop.id) || starting.has(shop.id) || saved.outbox.some(w => w.shopId === shop.id && w.target === 'shop' && w.data.createdAt)) continue;
     starting.add(shop.id);
     void watchShop(shop, (target, data) => {
-      void persist(mergeRemote(saved, shop.id, target, data)).catch(() => {});
+      receiveSnapshot(shop.id, target, data);
     }, error => notify({ error: errorMessage(error) })).then(stop => {
       if (saved.shops.some(s => s.id === shop.id && s.shared)) watchers.set(shop.id, stop);
       else stop();
@@ -152,10 +167,14 @@ export function useShops() {
 }
 
 export const actions = {
-  beginDrag() { dragDepth += 1; },
+  beginDrag() { dragDepth += 1; clearTimeout(syncTimer); syncTimer = undefined; },
   endDrag() {
     dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0 && saved.outbox.length) scheduleFlush(0);
+    if (dragDepth === 0) {
+      const snapshots = [...deferredSnapshots.values()]; deferredSnapshots.clear();
+      for (const { shopId, target, data } of snapshots) receiveSnapshot(shopId, target, data);
+      if (saved.outbox.length) scheduleFlush(0);
+    }
   },
   undo() {
     const restore = view.undo?.restore;

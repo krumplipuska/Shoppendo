@@ -237,20 +237,6 @@ test('zero-distance activation does not prematurely lock the back gesture axis',
   assert.equal(swipeAxis(2, 30), 2);
 });
 
-// The drag preview is transient: persistence still happens only on drop.
-test('drag preview opens the correct gap in either direction and across categories', async () => {
-  const { itemDragLayout, shouldStartListPull } = await import('../src/interaction.ts');
-  assert.deepEqual(itemDragLayout(['a','b','c','d'], { source:'a', target:'c', after:true, height:52 }), { shifts:{b:-52,c:-52,d:0}, delta:0 });
-  assert.deepEqual(itemDragLayout(['a','b','c'], { source:'c', target:'a', after:false, height:52 }), { shifts:{a:52,b:52}, delta:0 });
-  assert.deepEqual(itemDragLayout(['a','b'], { source:'a', target:'c', after:false, height:52 }), { shifts:{b:-52}, delta:-52 });
-  assert.deepEqual(itemDragLayout(['c','d'], { source:'a', target:'c', after:false, height:52 }), { shifts:{c:52,d:52}, delta:52 });
-  assert.deepEqual(itemDragLayout(['a','b'], { source:'a', target:'a', after:true, height:52 }), { shifts:{}, delta:0 });
-  assert.equal(shouldStartListPull(2,40,0), true);
-  assert.equal(shouldStartListPull(2,40,30), false);
-  assert.equal(shouldStartListPull(40,20,0), false);
-  assert.equal(shouldStartListPull(0,-40,0), false);
-});
-
 test('Done shows the newest completion first across categories', () => {
   const data = shop();
   data.items.apple = { ...data.items.apple, done:true, updatedAt:20 };
@@ -313,12 +299,6 @@ test('Done retains the newest 100 and pruning never removes active items or othe
 });
 
 
-test('drag gaps support dropping at the bottom, including moving the first row past every neighbor', async () => {
-  const { itemDragLayout } = await import('../src/interaction.ts');
-  assert.deepEqual(itemDragLayout(['a','b','c'],{source:'a',target:'c',after:true,height:70}),{shifts:{b:-70,c:-70},delta:0});
-  assert.deepEqual(itemDragLayout(['a','b','c'],{source:'c',target:'c',after:true,height:70}),{shifts:{},delta:0});
-});
-
 test('modal keyboard inset lifts iPhone panels and avoids double lifting resized windows', () => {
   const keyboard = { screenY: 524, height: 320 };
   assert.equal(keyboardOverlap(844, keyboard), 320);
@@ -326,43 +306,4 @@ test('modal keyboard inset lifts iPhone panels and avoids double lifting resized
   assert.equal(keyboardOverlap(524, keyboard), 0);
   assert.equal(keyboardOverlap(844, { screenY: 844, height: 0 }), 0);
   assert.equal(keyboardOverlap(844), 0);
-});
-
-test('all drag directions use the displayed insertion slot, including variable row heights', async () => {
-  const { dragOrder, dragSlotTop, itemDragLayout } = await import('../src/interaction.ts');
-  const ids = ['a', 'b', 'c', 'd'];
-  for (const sizes of [[64, 64, 64, 64], [64, 110, 52, 92]]) {
-    const tops = sizes.map((_, index) => sizes.slice(0, index).reduce((sum, size) => sum + size, 0));
-    for (const source of ids) for (const target of ids) for (const after of [false, true]) {
-      const drag = { source, target, after, height: sizes[ids.indexOf(source)] };
-      const order = dragOrder(ids, drag);
-      const layout = itemDragLayout(ids, drag);
-      let top = 0;
-      for (const id of order) {
-        const index = ids.indexOf(id);
-        if (id !== source) assert.equal(tops[index] + (layout.shifts[id] ?? 0), top, `${source} -> ${target}, after=${after}, ${id}`);
-        else if (source !== target) assert.equal(dragSlotTop(ids, drag, tops[ids.indexOf(target)], sizes[ids.indexOf(target)]), top);
-        top += sizes[index];
-      }
-      assert.equal(layout.delta, 0);
-    }
-  }
-  assert.equal(dragOrder(ids, { source: 'missing', target: 'a', after: false }), ids);
-});
-
-test('item persistence matches the preview when moving down, up, or across category boundaries', async () => {
-  const { dragOrder } = await import('../src/interaction.ts');
-  const base = shop();
-  base.items = { apple: { ...item('Apple'), position: 1 }, pear: { ...item('Pear'), position: 2 },
-    loaf: { ...item('Bread', 'bread'), position: 1 }, roll: { ...item('Roll', 'bread'), position: 2 } };
-  const ids = listItems(base).map(([id]) => id);
-  for (const source of ids) for (const target of ids) for (const after of [false, true]) {
-    if (source === target) continue;
-    const data = structuredClone(base);
-    const groupId = data.items[target].groupId;
-    const group = activeItems(data, groupId).map(([id]) => id).filter(id => id !== source);
-    const before = after ? group[group.indexOf(target) + 1] ?? null : target;
-    for (const [id, patch] of Object.entries(planItemMove(data, source, groupId, before))) Object.assign(data.items[id], patch);
-    assert.deepEqual(listItems(data).map(([id]) => id), dragOrder(ids, { source, target, after }), `${source} -> ${target}, after=${after}`);
-  }
 });

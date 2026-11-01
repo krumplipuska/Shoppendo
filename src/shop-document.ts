@@ -101,6 +101,9 @@ export function watchShopDocument(db: Firestore, uid: string, shopId: string, re
   let migrating: Promise<Shop> | undefined;
   let restoring: Promise<void> | undefined;
   return onSnapshot(doc(db, 'shops', shopId), { includeMetadataChanges: true }, snapshot => {
+    // Cached/pending snapshots are not server acknowledgements. The app already
+    // owns the optimistic state and replays its durable outbox over server data.
+    if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) return;
     if (!snapshot.exists()) {
       // An empty local SDK cache is not evidence that the server document is missing.
       if (snapshot.metadata.fromCache) return;

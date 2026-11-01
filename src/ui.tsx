@@ -6,9 +6,10 @@ import { type GroupIcon } from './model';
 import { backSwipeDirection, deleteSwipeProgress, keyboardOverlap } from './interaction';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-worklets';
+import { ReorderControl } from './reorder-list';
 import Animated, { ReduceMotion, useReducedMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
 
-export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'copy' | 'close' | 'trash' | 'more' | 'groupSort' | GroupIcon;
+export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'stop' | 'copy' | 'close' | 'trash' | 'more' | 'groupSort' | GroupIcon;
 export type InputHandle = React.ComponentRef<typeof TextInput>;
 type Dismiss = () => void | boolean;
 const EditingContext = createContext<Map<symbol, Dismiss> | null>(null);
@@ -55,7 +56,7 @@ const paths: Record<Exclude<IconName, 'more'>, string> = {
   trash: 'M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7',
   groupSort: 'M4 5v14m-3-3 3 3 3-3M10 5h11M10 12h8M10 19h5',
   plus: 'M12 5v14M5 12h14', check: 'm5 12 4 4L19 6', back: 'm14 5-7 7 7 7', down: 'm7 10 5 5 5-5', right: 'm9 6 6 6-6 6',
-  share: 'M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8', close: 'm6 6 12 12M6 18 18 6', bag: 'M5 7h14l1 14H4L5 7ZM8 8V6a4 4 0 0 1 8 0v2',
+  share: 'M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8', stop: 'M9 9h6v6H9z', close: 'm6 6 12 12M6 18 18 6', bag: 'M5 7h14l1 14H4L5 7ZM8 8V6a4 4 0 0 1 8 0v2',
   fruit: 'M12 8c-6-5-11 1-8 8 2 5 5 6 8 4 3 2 6 1 8-4 3-7-2-13-8-8Zm0 0V4m0 1c1-3 4-3 6-2-1 3-3 4-6 2Z',
   bread: 'M6 7c-5 0-5 7-2 8v6h16v-6c3-1 3-8-2-8-1-5-11-5-12 0Zm3 5 1 4m4-4 1 4',
   milk: 'M8 3h8v4l3 4v10H5V11l3-4V3Zm0 4h8M5 11h14M9 15h6v3H9Z',
@@ -91,6 +92,7 @@ const paths: Record<Exclude<IconName, 'more'>, string> = {
 export function Icon({ name, color = c.primary, size = 22, solid = false }: { name: IconName; color?: string; size?: number; solid?: boolean }) {
   return <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     {name === 'share' ? <><Path d="m8.6 10.5 6.8-4m-6.8 7 6.8 4" />{[[6, 12], [18, 5], [18, 19]].map(([x, y]) => <Circle key={y} cx={x} cy={y} r={3} fill={solid ? color : 'none'} />)}</>
+      : name === 'stop' ? <><Circle cx={12} cy={12} r={9} /><Path d="M9 9h6v6H9z" fill={color} stroke="none" /></>
       : name === 'more' ? [5, 12, 19].map(x => <Circle key={x} cx={x} cy={12} r={1} />) : <Path d={paths[name]} />}
   </Svg>;
 }
@@ -123,7 +125,7 @@ export function SwipeToDelete({ children, label, onDelete, disabled = false, onS
     <Animated.View style={normalStyle} pointerEvents={open ? 'none' : 'auto'} accessibilityElementsHidden={open} importantForAccessibility={open ? 'no-hide-descendants' : 'auto'} aria-hidden={open}>{normal}</Animated.View>
     <Animated.View style={[StyleSheet.absoluteFill, { alignItems: 'flex-end', justifyContent: 'center' }, deleteStyle]} pointerEvents={open ? 'auto' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'} aria-hidden={!open}>
       <EditingRegion onDismiss={visible ? reset : undefined}>
-        <IconButton icon="trash" filled color={c.danger} disabled={!open} label={`Delete ${label}`} onPress={() => { reset(); onDelete(); }} />
+        <ReorderControl><IconButton icon="trash" filled color={c.danger} disabled={!open} label={`Delete ${label}`} onPress={() => { reset(); onDelete(); }} /></ReorderControl>
       </EditingRegion>
     </Animated.View>
   </View>;
@@ -139,12 +141,15 @@ export function IconButton({ icon, label, onPress, filled = false, solid = false
   </Pressable>;
 }
 
-export function Button({ label, onPress, secondary = false, disabled = false, busy = false }: {
-  label: string; onPress: () => void; secondary?: boolean; disabled?: boolean; busy?: boolean;
+export function Button({ label, onPress, secondary = false, disabled = false, busy = false, icon }: {
+  label: string; onPress: () => void; secondary?: boolean; disabled?: boolean; busy?: boolean; icon?: IconName;
 }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled || busy} onPress={onPress}
-    style={({ pressed }) => [ui.button, secondary && { backgroundColor: c.secondary }, (disabled || busy) && { opacity: 0.5 }, pressed && { opacity: 0.8 }]}>
-    {busy ? <ActivityIndicator color={c.white} /> : <Text style={ui.buttonText}>{label}</Text>}
+    style={({ pressed }) => [ui.button, icon && !busy && { flexDirection: 'row', gap: 8 }, secondary && { backgroundColor: c.secondary }, (disabled || busy) && { opacity: 0.5 }, pressed && { opacity: 0.8 }]}>
+    {busy ? <ActivityIndicator color={c.white} /> : <>
+      {icon && <Icon name={icon} color={c.white} />}
+      <Text style={ui.buttonText}>{label}</Text>
+    </>}
   </Pressable>;
 }
 
