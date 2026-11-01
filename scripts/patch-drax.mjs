@@ -37,3 +37,15 @@ for (const path of ['src/DraxView.tsx', 'lib/module/DraxView.js']) {
   if (!input.includes(original)) throw new Error('Unexpected Drax registry effect in ' + path);
   writeFileSync(file, input.replace(original, replacement));
 }
+
+// RN 0.88 removed absoluteFillObject. Spreading undefined puts the hover
+// after the flex-filling app in normal flow, below the native viewport.
+for (const path of ['src/HoverLayer.tsx', 'lib/module/HoverLayer.js']) {
+  const file = join(root, path);
+  const input = readFileSync(file, 'utf8');
+  const original = '...StyleSheet.absoluteFillObject,';
+  const replacement = "position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,";
+  if (input.includes(replacement)) continue;
+  if (!input.includes(original)) throw new Error('Unexpected Drax hover container in ' + path);
+  writeFileSync(file, input.replace(original, replacement));
+}
