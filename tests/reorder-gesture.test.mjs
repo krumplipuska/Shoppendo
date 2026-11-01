@@ -11,7 +11,7 @@ const compiled = ts.transpileModule(readFileSync(new URL('../src/reorder-list.ts
 }).outputText;
 
 function rowHarness(inRow = true) {
-  let gesture;
+  let gesture, hold;
   const failures = [], settlements = [];
   let starts = 0;
   const sv = value => ({ value });
@@ -27,7 +27,7 @@ function rowHarness(inRow = true) {
     react: { createContext: () => ({ Provider: 'Provider' }), useContext: () => inRow },
     'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) },
     'react-native': { StyleSheet: { create: value => value } },
-    'react-native-gesture-handler': { GestureStateManager: { fail: tag => failures.push(tag) }, usePanGesture: config => { gesture = config; return config; } },
+    'react-native-gesture-handler': { GestureStateManager: { fail: tag => failures.push(tag), activate: tag => gesture.onActivate({ handlerTag: tag, absoluteY: 120 }) }, usePanGesture: config => { gesture = config; return config; }, useLongPressGesture: config => { hold = config; return config; }, useSimultaneousGestures: (...gestures) => gestures },
     'react-native-reanimated': { __esModule: true, default: { createAnimatedComponent: x => x },
       ReduceMotion: { System: 'system' }, useSharedValue: sv, useAnimatedReaction: () => {}, useAnimatedStyle: fn => fn(),
       measure: ref => ref.bounds, withTiming: value => value },
@@ -38,13 +38,15 @@ function rowHarness(inRow = true) {
     assert.ok(modules[name], `Unexpected dependency: ${name}`); return modules[name];
   }, exports);
   const tree = exports.testRow({ id: 'a', children: null, enabled: true, context });
-  return { gesture, context, failures, settlements, tree, tapProps: exports.useReorderTap(), starts: () => starts };
+  return { gesture, hold, context, failures, settlements, tree, tapProps: exports.useReorderTap(), starts: () => starts };
 }
 
 test('row callbacks configure a 300ms hold and short/failed gestures never settle or commit', () => {
   const h = rowHarness();
-  assert.equal(h.gesture.activateAfterLongPress, 300);
-  assert.deepEqual(h.gesture.failOffsetY, [-12, 12]);
+  assert.equal(h.hold.minDuration, 300);
+  assert.equal(h.hold.maxDistance, 18);
+  assert.equal(h.gesture.manualActivation, true);
+  assert.equal(h.gesture.activateAfterLongPress, undefined);
   assert.equal(h.gesture.cancelsJSResponder, true);
   h.gesture.onFinalize({ canceled: true });
   h.gesture.onDeactivate({ canceled: true });
@@ -59,7 +61,7 @@ test('the complete row rectangle accepts holds, including control and edge posit
     assert.deepEqual(h.failures, [], `hold at ${x}, ${y} must not be excluded`);
     h.gesture.onActivate({ handlerTag: 7, absoluteY: y });
     assert.equal(h.starts(), 1);
-    const surface = h.tree.props.children.props.children;
+    const surface = h.tree.props.children.props.children.props.children;
     assert.equal(surface.props.pointerEvents, 'auto');
     assert.equal(surface.props.style[0].left, 0);
     assert.equal(surface.props.style[0].right, 0);
@@ -100,4 +102,74 @@ test('cancellation restores via the shared finalizer; neighboring gestures canno
   h.gesture.onDeactivate({ canceled: true });
   h.gesture.onFinalize({ canceled: true });
   assert.deepEqual(h.settlements, [true]);
+});
+
+// Exercise the installed recognizer's actual timer and distance code. Only its
+// platform delegate/state delivery is replaced; activation is not called by the test.
+function recognizer(h) {
+  const State = { UNDETERMINED: 0, BEGAN: 2, ACTIVE: 4, END: 5, FAILED: 1, CANCELLED: 3 };
+  class Base {
+    state = 0;
+    tracker = {
+      trackedPointersCount: 0, point: { x: 0, y: 0 },
+      addToTracker(e) { this.trackedPointersCount++; this.point = e; },
+      track(e) { this.point = e; },
+      removeFromTracker() { this.trackedPointersCount--; },
+      getAbsoluteCoordsAverage() { return this.point; },
+    };
+    updateGestureConfig() {} onPointerDown() {} onPointerMove() {} onPointerUp() {}
+    isButtonInConfig() { return true; }
+    transition(next) {
+      const before = this.state; this.state = next; this.onStateChange(next, before);
+      if (next === State.ACTIVE) h.hold.onActivate();
+      if ([State.END, State.FAILED, State.CANCELLED].includes(next)) h.hold.onFinalize();
+    }
+    begin() { this.transition(State.BEGAN); }
+    activate() { this.transition(State.ACTIVE); }
+    fail() { this.transition(State.FAILED); }
+    cancel() { this.transition(State.CANCELLED); }
+    end() { this.transition(State.END); }
+  }
+  const source = readFileSync(new URL('../node_modules/react-native-gesture-handler/src/web/handlers/LongPressGestureHandler.ts', import.meta.url), 'utf8');
+  const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+  const exports = {};
+  new Function('require', 'exports', js)(name => {
+    if (name.endsWith('/State')) return { State };
+    if (name.endsWith('/types')) return { SingleGestureName: { LongPress: 'LongPress' } };
+    if (name === './GestureHandler') return { __esModule: true, default: Base };
+    throw new Error(name);
+  }, exports);
+  const handler = new exports.default();
+  handler.updateGestureConfig({ minDurationMs: h.hold.minDuration, maxDist: h.hold.maxDistance });
+  h.gesture.onTouchesDown({ handlerTag: 7 });
+  return handler;
+}
+
+test('real hold timer lifts at 300ms with no further motion, including 15pt jitter', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const jitter of [0, 15]) {
+    const h = rowHarness(), handler = recognizer(h);
+    handler.onPointerDown({ x: 120, y: 120, pointerId: 1 });
+    handler.onPointerMove({ x: 120 + jitter, y: 120, pointerId: 1 });
+    t.mock.timers.tick(299); assert.equal(h.starts(), 0);
+    t.mock.timers.tick(1); assert.equal(h.starts(), 1);
+    handler.onPointerMove({ x: 180, y: 220, pointerId: 1 });
+    assert.deepEqual(h.failures, [], 'hold distance cancellation must not cancel an active pan');
+    h.gesture.onDeactivate({ canceled: false });
+    assert.deepEqual(h.settlements, [false]);
+  }
+});
+
+test('short release or movement beyond tolerance cancels the timer and frees competing gestures', t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const release of [true, false]) {
+    const h = rowHarness(), handler = recognizer(h);
+    handler.onPointerDown({ x: 120, y: 120, pointerId: 1 });
+    t.mock.timers.tick(100);
+    if (release) handler.onPointerUp({ pointerId: 1 });
+    else handler.onPointerMove({ x: 139, y: 120, pointerId: 1 });
+    t.mock.timers.tick(500);
+    assert.equal(h.starts(), 0); assert.deepEqual(h.failures, [7]);
+    assert.deepEqual(h.settlements, []);
+  }
 });

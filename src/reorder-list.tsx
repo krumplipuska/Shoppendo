@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AppState, Platform, StyleSheet, View, type ScrollView as RNScrollView, type StyleProp, type ViewStyle } from 'react-native';
-import { GestureDetector, GestureStateManager, ScrollView, usePanGesture, type PanGesture } from 'react-native-gesture-handler';
+import { GestureDetector, GestureStateManager, ScrollView, usePanGesture, useLongPressGesture, useSimultaneousGestures, type LongPressGesture, type NativeGesture, type PanGesture } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, measure, scrollTo, useAnimatedReaction, useAnimatedRef, useAnimatedScrollHandler, useAnimatedStyle, useFrameCallback, useSharedValue, withSpring, withTiming, ReduceMotion, type AnimatedRef, type SharedValue } from 'react-native-reanimated';
 import { runOnJS, runOnUI } from 'react-native-worklets';
 import * as Haptics from 'expo-haptics';
@@ -11,6 +11,8 @@ const timing = { duration: 150, reduceMotion: ReduceMotion.System };
 const spring = { damping: 30, stiffness: 320, overshootClamping: true, reduceMotion: ReduceMotion.System };
 type ScrollInstance = React.ComponentRef<typeof RNScrollView>;
 const ReorderSurface = createContext(false);
+const ReorderHold = createContext<LongPressGesture | undefined>(undefined);
+export const useReorderHold = () => useContext(ReorderHold);
 
 /** A handled long press suppresses the control's release tap, without blocking
  * the ancestor drag recognizer. Short taps keep their normal behavior. */
@@ -33,6 +35,7 @@ type Props = {
  * No React updates, cloning, or persistence occur in pointer/frame callbacks.
  */
 export function ReorderList({ ids, renderRow, onReorder, onDragStart, onDragEnd, enabled = true, header, footer, contentContainerStyle, scrollRef, scrollY: externalScrollY, simultaneousWith }: Props) {
+  const [scrollGesture, setScrollGesture] = useState<NativeGesture>();
   const scroll = useAnimatedRef<ScrollInstance>();
   const rows = useAnimatedRef<View>();
   const order = useSharedValue(ids);
@@ -117,9 +120,10 @@ export function ReorderList({ ids, renderRow, onReorder, onDragStart, onDragEnd,
     if (!sameOrder(preview, order.value)) order.value = preview;
   });
   const containerStyle = useAnimatedStyle(() => ({ height: order.value.reduce((sum, id) => sum + (heights.value[id] ?? 64), 0), zIndex: active.value ? 1 : 0 }));
-  const context = { order, original, heights, active, phase, finger, grab, dragTop, scale, scrollY, viewport, rowsOffset, scroll, rows, begin, settle };
+  const context = { order, original, heights, active, phase, finger, grab, dragTop, scale, scrollY, viewport, rowsOffset, scroll, rows, begin, settle, scrollGesture, pageGesture: simultaneousWith };
   return <AnimatedScroll ref={(instance: ScrollInstance | null) => { scroll(instance); if (scrollRef) scrollRef.current = instance; }} style={styles.flex}
     simultaneousWith={simultaneousWith} disallowInterruption={false} bounces={false} removeClippedSubviews={false}
+    onGestureUpdate_CAN_CAUSE_INFINITE_RERENDER={setScrollGesture}
     keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" scrollEventThrottle={16} onScroll={onScroll}
     onLayout={() => { if (phase.value === 1) runOnUI(settle)(true); }}
     contentContainerStyle={contentContainerStyle} onContentSizeChange={(_, height) => { contentHeight.value = height; }}>
@@ -132,6 +136,7 @@ export function ReorderList({ ids, renderRow, onReorder, onDragStart, onDragEnd,
 }
 
 type RowContext = {
+  scrollGesture?: NativeGesture; pageGesture?: PanGesture;
   order: SharedValue<string[]>; original: SharedValue<string[]>; heights: SharedValue<Heights>;
   active: SharedValue<string>; phase: SharedValue<0 | 1 | 2>; finger: SharedValue<number>; grab: SharedValue<number>;
   dragTop: SharedValue<number>; scale: SharedValue<number>; scrollY: SharedValue<number>;
@@ -141,14 +146,16 @@ type RowContext = {
 function ReorderRow({ id, children, enabled, context }: { id: string; children: ReactNode; enabled: boolean; context: RowContext }) {
   const { order, original, heights, active, phase, finger, grab, dragTop, scale, scrollY, viewport, rowsOffset, scroll, rows, begin, settle } = context;
   const y = useSharedValue(0);
+  const panTag = useSharedValue(-1);
   useAnimatedReaction(() => ({ top: rowTop(order.value, heights.value, id), phase: phase.value }), (value, previous) => {
     if (value.top !== previous?.top || value.phase !== previous?.phase) y.value = value.phase ? withTiming(value.top, timing) : value.top;
   });
-  const gesture = usePanGesture({
-    enabled, activateAfterLongPress: HOLD_MS, failOffsetX: [-12, 12], failOffsetY: [-12, 12], maxPointers: 1,
+  const pan = usePanGesture({
+    enabled, manualActivation: true, maxPointers: 1,
     cancelsJSResponder: true, cancelsTouchesInView: true,
     onTouchesDown: event => {
       'worklet';
+      panTag.value = event.handlerTag;
       if (phase.value !== 0) {
         if (active.value === id) settle(true);
         GestureStateManager.fail(event.handlerTag); return;
@@ -175,13 +182,31 @@ function ReorderRow({ id, children, enabled, context }: { id: string; children: 
     onDeactivate: event => { 'worklet'; if (active.value === id) settle(event.canceled); },
     onFinalize: event => { 'worklet'; if (active.value === id && phase.value === 1) settle(true); },
   });
+  // Pan's activateAfterLongPress has a hard-coded movement slop (10pt on iOS).
+  // A dedicated native hold provides configurable jitter tolerance and a timer
+  // that activates the pan even when the finger remains completely still.
+  const hold = useLongPressGesture({
+    enabled, minDuration: HOLD_MS, maxDistance: 18, shouldCancelWhenOutside: false,
+    block: [context.scrollGesture, context.pageGesture].filter((gesture): gesture is NativeGesture | PanGesture => !!gesture),
+    onActivate: () => {
+      'worklet';
+      if (phase.value === 0 && panTag.value !== -1) GestureStateManager.activate(panTag.value);
+    },
+    onFinalize: () => {
+      'worklet';
+      // Once lifted, the pan owns movement/release, including movement beyond
+      // the hold tolerance. Before lifting, failure frees scrolling/swiping.
+      if (phase.value === 0 && panTag.value !== -1) GestureStateManager.fail(panTag.value);
+    },
+  });
+  const gesture = useSimultaneousGestures(pan, hold);
   const style = useAnimatedStyle(() => {
     const lifted = active.value === id;
     return { transform: [{ translateY: lifted ? dragTop.value : y.value }, { scale: lifted ? scale.value : 1 }],
       zIndex: lifted ? 100 : 0, elevation: lifted ? 12 : 0,
       shadowOpacity: lifted ? 0.15 * Math.max(0, (scale.value - 1) / 0.03) : 0 };
   });
-  return <ReorderSurface.Provider value={enabled}><GestureDetector gesture={gesture} touchAction="pan-y">
+  return <ReorderSurface.Provider value={enabled}><ReorderHold.Provider value={hold}><GestureDetector gesture={gesture} touchAction="pan-y">
     <Animated.View pointerEvents="auto" style={[styles.row, style]} collapsable={false} onLayout={event => {
       const height = event.nativeEvent.layout.height;
       if (height > 0 && heights.value[id] !== height) {
@@ -189,7 +214,7 @@ function ReorderRow({ id, children, enabled, context }: { id: string; children: 
         heights.value = { ...heights.value, [id]: height };
       }
     }}>{children}</Animated.View>
-  </GestureDetector></ReorderSurface.Provider>;
+  </GestureDetector></ReorderHold.Provider></ReorderSurface.Provider>;
 }
 
 const styles = StyleSheet.create({

@@ -6,7 +6,7 @@ import { type GroupIcon } from './model';
 import { backSwipeDirection, deleteSwipeProgress, keyboardOverlap } from './interaction';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-worklets';
-import { useReorderTap } from './reorder-list';
+import { useReorderTap, useReorderHold } from './reorder-list';
 import Animated, { ReduceMotion, useReducedMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
 
 export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'stop' | 'copy' | 'close' | 'trash' | 'more' | 'groupSort' | GroupIcon;
@@ -109,7 +109,9 @@ export function SwipeToDelete({ children, label, onDelete, disabled = false, onS
   const reset = () => { setOpen(false); setVisible(false); progress.value = withTiming(0, { duration: 160, reduceMotion: ReduceMotion.System }); };
   const begin = () => { setVisible(true); onSwipeStart?.(); };
   const finish = (armed: boolean) => { setOpen(armed); setVisible(armed); onSwipeEnd?.(); };
+  const reorderHold = useReorderHold();
   const gesture = usePanGesture({
+    requireToFail: reorderHold,
     enabled: !disabled, activeOffsetX: [-14, 14], failOffsetY: [-12, 12],
     onActivate: () => { 'worklet'; active.value = true; cancelAnimation(progress); start.value = progress.value; runOnJS(begin)(); },
     onUpdate: event => { 'worklet'; progress.value = deleteSwipeProgress(event.translationX, start.value); },
