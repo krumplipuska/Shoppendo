@@ -1,12 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AppState, Platform, StyleSheet, View, type ScrollView as RNScrollView, type StyleProp, type ViewStyle } from 'react-native';
-import { GestureDetector, GestureStateManager, ScrollView, usePanGesture, useLongPressGesture, useSimultaneousGestures, type LongPressGesture, type NativeGesture, type PanGesture } from 'react-native-gesture-handler';
+import { GestureDetector, GestureStateManager, useNativeGesture, usePanGesture, useLongPressGesture, useSimultaneousGestures, type LongPressGesture, type NativeGesture, type PanGesture } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, measure, scrollTo, useAnimatedReaction, useAnimatedRef, useAnimatedScrollHandler, useAnimatedStyle, useFrameCallback, useSharedValue, withSpring, withTiming, ReduceMotion, type AnimatedRef, type SharedValue } from 'react-native-reanimated';
 import { runOnJS, runOnUI } from 'react-native-worklets';
 import * as Haptics from 'expo-haptics';
 import { edgeVelocity, HOLD_MS, previewOrder, rowTop, sameOrder, type Heights } from './reorder';
 
-const AnimatedScroll = Animated.createAnimatedComponent(ScrollView);
 const timing = { duration: 150, reduceMotion: ReduceMotion.System };
 const spring = { damping: 30, stiffness: 320, overshootClamping: true, reduceMotion: ReduceMotion.System };
 type ScrollInstance = React.ComponentRef<typeof RNScrollView>;
@@ -35,8 +34,12 @@ type Props = {
  * No React updates, cloning, or persistence occur in pointer/frame callbacks.
  */
 export function ReorderList({ ids, renderRow, onReorder, onDragStart, onDragEnd, enabled = true, header, footer, contentContainerStyle, scrollRef, scrollY: externalScrollY, simultaneousWith }: Props) {
-  const [scrollGesture, setScrollGesture] = useState<NativeGesture>();
+  const scrollGesture = useNativeGesture({ simultaneousWith, disallowInterruption: false });
   const scroll = useAnimatedRef<ScrollInstance>();
+  const attachScroll = useCallback((instance: ScrollInstance | null) => {
+    scroll(instance);
+    if (scrollRef) scrollRef.current = instance;
+  }, [scroll, scrollRef]);
   const rows = useAnimatedRef<View>();
   const order = useSharedValue(ids);
   const original = useSharedValue(ids);
@@ -56,6 +59,15 @@ export function ReorderList({ ids, renderRow, onReorder, onDragStart, onDragEnd,
   const [completion, setCompletion] = useState(0);
   const latest = useRef({ ids, onReorder, onDragStart, onDragEnd });
   latest.current = { ids, onReorder, onDragStart, onDragEnd };
+  const syncGeometry = useCallback(() => {
+    runOnUI(() => {
+      'worklet';
+      const bounds = measure(scroll);
+      const list = measure(rows);
+      if (bounds) viewport.value = { top: bounds.pageY, height: bounds.height };
+      if (bounds && list) rowsOffset.value = list.pageY - bounds.pageY + scrollY.value;
+    })();
+  }, [scroll, rows, viewport, rowsOffset, scrollY]);
   const begin = useCallback(() => {
     if (!mounted.current || locked.current) return;
     locked.current = true; latest.current.onDragStart();
@@ -121,22 +133,21 @@ export function ReorderList({ ids, renderRow, onReorder, onDragStart, onDragEnd,
   });
   const containerStyle = useAnimatedStyle(() => ({ height: order.value.reduce((sum, id) => sum + (heights.value[id] ?? 64), 0), zIndex: active.value ? 1 : 0 }));
   const context = { order, original, heights, active, phase, finger, grab, dragTop, scale, scrollY, viewport, rowsOffset, scroll, rows, begin, settle, scrollGesture, pageGesture: simultaneousWith };
-  return <AnimatedScroll ref={(instance: ScrollInstance | null) => { scroll(instance); if (scrollRef) scrollRef.current = instance; }} style={styles.flex}
-    simultaneousWith={simultaneousWith} disallowInterruption={false} bounces={false} removeClippedSubviews={false}
-    onGestureUpdate_CAN_CAUSE_INFINITE_RERENDER={setScrollGesture}
+  return <GestureDetector gesture={scrollGesture} touchAction="pan-y"><Animated.ScrollView ref={attachScroll} style={styles.flex}
+    bounces={false} removeClippedSubviews={false}
     keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" scrollEventThrottle={16} onScroll={onScroll}
-    onLayout={() => { if (phase.value === 1) runOnUI(settle)(true); }}
+    onLayout={() => { syncGeometry(); if (phase.value === 1) runOnUI(settle)(true); }}
     contentContainerStyle={contentContainerStyle} onContentSizeChange={(_, height) => { contentHeight.value = height; }}>
     {header}
-    <Animated.View ref={rows} style={containerStyle} collapsable={false}>
+    <Animated.View ref={rows} style={containerStyle} collapsable={false} onLayout={syncGeometry}>
       {ids.map(id => <ReorderRow key={id} id={id} enabled={enabled} context={context}>{renderRow(id)}</ReorderRow>)}
     </Animated.View>
     {footer}
-  </AnimatedScroll>;
+  </Animated.ScrollView></GestureDetector>;
 }
 
 type RowContext = {
-  scrollGesture?: NativeGesture; pageGesture?: PanGesture;
+  scrollGesture: NativeGesture; pageGesture?: PanGesture;
   order: SharedValue<string[]>; original: SharedValue<string[]>; heights: SharedValue<Heights>;
   active: SharedValue<string>; phase: SharedValue<0 | 1 | 2>; finger: SharedValue<number>; grab: SharedValue<number>;
   dragTop: SharedValue<number>; scale: SharedValue<number>; scrollY: SharedValue<number>;
@@ -147,11 +158,12 @@ function ReorderRow({ id, children, enabled, context }: { id: string; children: 
   const { order, original, heights, active, phase, finger, grab, dragTop, scale, scrollY, viewport, rowsOffset, scroll, rows, begin, settle } = context;
   const y = useSharedValue(0);
   const panTag = useSharedValue(-1);
+  const blockedGestures = context.pageGesture ? [context.scrollGesture, context.pageGesture] : [context.scrollGesture];
   useAnimatedReaction(() => ({ top: rowTop(order.value, heights.value, id), phase: phase.value }), (value, previous) => {
     if (value.top !== previous?.top || value.phase !== previous?.phase) y.value = value.phase ? withTiming(value.top, timing) : value.top;
   });
   const pan = usePanGesture({
-    enabled, manualActivation: true, maxPointers: 1,
+    enabled, manualActivation: true, maxPointers: 1, block: blockedGestures,
     cancelsJSResponder: true, cancelsTouchesInView: true,
     onTouchesDown: event => {
       'worklet';
@@ -163,13 +175,16 @@ function ReorderRow({ id, children, enabled, context }: { id: string; children: 
     },
     onActivate: event => {
       'worklet';
+      if (phase.value !== 0 || order.value.some(key => !heights.value[key])) { GestureStateManager.fail(event.handlerTag); return; }
       const bounds = measure(scroll); const list = measure(rows);
-      if (!bounds || !list || phase.value !== 0 || order.value.some(key => !heights.value[key])) { GestureStateManager.fail(event.handlerTag); return; }
-      viewport.value = { top: bounds.pageY, height: bounds.height };
-      rowsOffset.value = list.pageY - bounds.pageY + scrollY.value;
+      // Native measure can miss a frame; fall back to geometry cached from onLayout.
+      if (bounds) viewport.value = { top: bounds.pageY, height: bounds.height };
+      if (bounds && list) rowsOffset.value = list.pageY - bounds.pageY + scrollY.value;
+      if (viewport.value.height <= 0) { GestureStateManager.fail(event.handlerTag); return; }
       original.value = order.value; active.value = id; phase.value = 1;
       dragTop.value = rowTop(order.value, heights.value, id);
-      grab.value = event.absoluteY - list.pageY - dragTop.value;
+      const listPageY = list ? list.pageY : viewport.value.top + rowsOffset.value - scrollY.value;
+      grab.value = event.absoluteY - listPageY - dragTop.value;
       finger.value = event.absoluteY; scale.value = withTiming(1.03, timing);
       runOnJS(begin)();
     },
@@ -180,14 +195,14 @@ function ReorderRow({ id, children, enabled, context }: { id: string; children: 
       dragTop.value = event.absoluteY - viewport.value.top + scrollY.value - rowsOffset.value - grab.value;
     },
     onDeactivate: event => { 'worklet'; if (active.value === id) settle(event.canceled); },
-    onFinalize: event => { 'worklet'; if (active.value === id && phase.value === 1) settle(true); },
+    onFinalize: () => { 'worklet'; panTag.value = -1; if (active.value === id && phase.value === 1) settle(true); },
   });
   // Pan's activateAfterLongPress has a hard-coded movement slop (10pt on iOS).
   // A dedicated native hold provides configurable jitter tolerance and a timer
   // that activates the pan even when the finger remains completely still.
   const hold = useLongPressGesture({
     enabled, minDuration: HOLD_MS, maxDistance: 18, shouldCancelWhenOutside: false,
-    block: [context.scrollGesture, context.pageGesture].filter((gesture): gesture is NativeGesture | PanGesture => !!gesture),
+    block: blockedGestures,
     onActivate: () => {
       'worklet';
       if (phase.value === 0 && panTag.value !== -1) GestureStateManager.activate(panTag.value);
@@ -206,18 +221,21 @@ function ReorderRow({ id, children, enabled, context }: { id: string; children: 
       zIndex: lifted ? 100 : 0, elevation: lifted ? 12 : 0,
       shadowOpacity: lifted ? 0.15 * Math.max(0, (scale.value - 1) / 0.03) : 0 };
   });
-  return <ReorderSurface.Provider value={enabled}><ReorderHold.Provider value={hold}><GestureDetector gesture={gesture} touchAction="pan-y">
+  return <ReorderSurface.Provider value={enabled}><ReorderHold.Provider value={hold}>
     <Animated.View pointerEvents="auto" style={[styles.row, style]} collapsable={false} onLayout={event => {
       const height = event.nativeEvent.layout.height;
       if (height > 0 && heights.value[id] !== height) {
         if (phase.value === 1) runOnUI(settle)(true);
         heights.value = { ...heights.value, [id]: height };
       }
-    }}>{children}</Animated.View>
-  </GestureDetector></ReorderHold.Provider></ReorderSurface.Provider>;
+    }}><GestureDetector gesture={gesture} touchAction="pan-y">
+      <View collapsable={false}>{children}</View>
+    </GestureDetector></Animated.View>
+  </ReorderHold.Provider></ReorderSurface.Provider>;
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  row: { position: 'absolute', top: 0, left: 0, right: 0, shadowColor: '#000', shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+  // backgroundColor is required for Android elevation / stacking above neighbors.
+  row: { position: 'absolute', top: 0, left: 0, right: 0, backgroundColor: '#fff', shadowColor: '#000', shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
 });
