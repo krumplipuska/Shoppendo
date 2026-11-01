@@ -366,3 +366,85 @@ test('item persistence matches the preview when moving down, up, or across categ
     assert.deepEqual(listItems(data).map(([id]) => id), dragOrder(ids, { source, target, after }), `${source} -> ${target}, after=${after}`);
   }
 });
+
+test('release resolves current receiver and respects source-removed insertion slots', async () => {
+  const { itemDropSlot } = await import('../src/model.ts');
+  const data = shop();
+  data.items = Object.fromEntries(['A','B','C','D'].map(id => [id, item(id)]));
+  for (const [source, target, after, expected] of [
+    ['A','C',true,'BCAD'], ['D','B',false,'ADBC'], ['B','C',true,'ACBD'],
+    ['C','A',false,'CABD'], ['B','D',true,'ACDB'],
+  ]) {
+    const copy = structuredClone(data);
+    const slot = itemDropSlot(copy, source, target, after);
+    for (const [id, patch] of Object.entries(planItemMove(copy, source, slot.groupId, slot.beforeId))) Object.assign(copy.items[id], patch);
+    assert.equal(listItems(copy).map(([id]) => id).join(''), expected);
+  }
+  for (const [source, target, after] of [['B','C',false], ['B','A',true], ['A','A',true], ['missing','A',true], ['A','missing',false]]) {
+    assert.equal(itemDropSlot(data, source, target, after), null);
+  }
+  data.items.B.groupId = 'bread';
+  assert.deepEqual(itemDropSlot(data, 'A', 'B', true), { groupId: 'bread', beforeId: null });
+  for (const key of ['done', 'deleted']) {
+    data.items.B[key] = true;
+    assert.equal(itemDropSlot(data, 'A', 'B', false), null);
+    assert.equal(itemDropSlot(data, 'B', 'A', true), null);
+    data.items.B[key] = false;
+  }
+});
+
+test('movement centre and release top-left resolve the same slot with different row heights', async () => {
+  const { insertionSide } = await import('../src/interaction.ts');
+  const receiver = { width: 200, height: 80 }, source = { width: 200, height: 64 };
+  for (const y of [-1, 0, 39, 40, 80, 81]) {
+    const expected = y < 0 || y > 80 ? null : y >= 40;
+    assert.equal(insertionSide({ x: 100, y }, receiver, source, false), expected);
+    assert.equal(insertionSide({ x: 0, y: y - 32 }, receiver, source, true), expected);
+  }
+  assert.equal(insertionSide({ x: 0, y: 1 }, receiver, { width: 0, height: 64 }, true), null);
+});
+
+test('only the current session can finish, independently of animation completion', async () => {
+  const { dragSession } = await import('../src/interaction.ts');
+  const session = dragSession();
+  const old = session.start(), current = session.start();
+  const order = [];
+  const commit = () => order.push('accepted');
+  assert.equal(session.finish(old, commit), false);
+  assert.equal(session.finish(current, commit), true);
+  assert.equal(session.finish(current, commit), false);
+  for (const reason of ['cancelled', 'outside receiver']) {
+    const ended = session.start();
+    assert.equal(session.finish(ended), true, reason);
+    assert.equal(session.finish(ended, commit), false);
+  }
+  assert.deepEqual(order, ['accepted']);
+});
+
+test('installed Drax native and built adapters deliver one terminal event per active RNGH v3 pan', async () => {
+  const { createRequire } = await import('node:module');
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { runInNewContext } = await import('node:vm');
+  const require = createRequire(import.meta.url);
+  const ts = require('typescript');
+  const root = dirname(require.resolve('react-native-drax/package.json'));
+  for (const path of ['src/compat/useDraxPanGesture.ts', 'lib/module/compat/useDraxPanGesture.js']) {
+    const code = ts.transpile(readFileSync(join(root, path), 'utf8'), { module: ts.ModuleKind.CommonJS });
+    const exports = {};
+    runInNewContext(code, { exports, require: name => name.includes('detectVersion')
+      ? { isGestureHandlerV3: () => true } : { usePanGesture: config => config } });
+    const calls = [];
+    const gesture = exports.useDraxPanGesture({
+      onDeactivate: () => calls.push('drop'),
+      onFinalize: (_, success) => { if (!success) calls.push('cancel'); },
+    });
+    // RNGH sends finalize even for a non-activated pan on a different row.
+    gesture.onFinalize?.({ canceled: true });
+    for (const canceled of [false, true]) {
+      gesture.onDeactivate({ canceled });
+      gesture.onFinalize?.({ canceled });
+    }
+    assert.deepEqual(calls, ['drop', 'cancel'], path);
+  }
+});

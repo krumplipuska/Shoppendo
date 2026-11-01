@@ -166,6 +166,17 @@ export function itemSuggestions(shops: Shop[], shop: Shop, query: string) {
 }
 
 // A move usually needs only one item patch.
+export function itemDropSlot(shop: Shop, source: string, target: string, after: boolean) {
+  const item = shop.items[source], receiver = shop.items[target];
+  if (source === target || !item || item.deleted || item.done || !receiver || receiver.deleted || receiver.done) return null;
+  if (![item.groupId, receiver.groupId].every(id => shop.groups[id] && !shop.groups[id].deleted)) return null;
+  const ids = activeItems(shop, receiver.groupId).map(([id]) => id);
+  const without = ids.filter(id => id !== source);
+  const index = without.indexOf(target) + Number(after);
+  if (ids.indexOf(source) === index) return null;
+  return { groupId: receiver.groupId, beforeId: without[index] ?? null };
+}
+
 export function planItemMove(shop: Shop, itemId: string, groupId: string, beforeId: string | null = null, allowCompleted = false) {
   const item = shop.items[itemId];
   if (!shop.groups[groupId] || shop.groups[groupId].deleted || !item || shop.groups[item.groupId]?.deleted || (item.done && !allowCompleted) || item.deleted || beforeId === itemId) return {};

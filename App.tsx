@@ -3,18 +3,18 @@ import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Linking
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureDetector, GestureHandlerRootView, GestureStateManager, ScrollView as GestureScrollView, usePanGesture } from 'react-native-gesture-handler';
-import { DraxProvider, useDraxId, useDraxContext, DraxView, DraxHandle, DraxScrollView, DraxSnapbackTargetPreset, type DraxViewMeasurements, type DraxDragEventData, type DraxDragWithReceiverEventData, type DraxSnapbackTarget, type Position } from 'react-native-drax';
+import { DraxProvider, DraxView, DraxHandle, DraxScrollView, DraxSnapbackTargetPreset, type DraxViewMeasurements, type DraxDragEventData, type DraxDragWithReceiverEventData } from 'react-native-drax';
 import Animated, { FadeIn, FadeInUp, FadeInDown, FadeOut, FadeOutDown, ZoomIn, SlideInDown, Easing, ReduceMotion, useSharedValue, useAnimatedStyle, cancelAnimation, withDelay, withTiming } from 'react-native-reanimated';
 import { useFonts } from 'expo-font';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { actions, errorMessage, load, useShops } from './src/store';
-import { activeItems, doneItems, formatCode, GROUP_ICONS, itemSuggestions, listItems, orderedGroups, mergeCategoryOrder, storeInitials, type GroupIcon, type Item, type Shop } from './src/model';
+import { actions, errorMessage, getShopSnapshot, load, useShops } from './src/store';
+import { activeItems, doneItems, formatCode, GROUP_ICONS, itemSuggestions, itemDropSlot, listItems, orderedGroups, mergeCategoryOrder, storeInitials, type GroupIcon, type Item, type Shop } from './src/model';
 import { Button, Icon, IconButton, EditingRegion, EditingSurface, useFinishEditing, InlineInput, Sheet, SwipeToDelete, FloatingAddButton, ui } from './src/ui';
 import { colors as c, fonts as f, entityTone } from './src/theme';
 
-import { runOnJS, runOnUI } from 'react-native-worklets';
-import { backSwipeDirection, swipeAxis, itemDragLayout, dragOrder, dragSlotTop, shouldStartListPull } from './src/interaction';
+import { runOnJS } from 'react-native-worklets';
+import { backSwipeDirection, swipeAxis, dragSession, insertionSide, dragOrder, shouldStartListPull } from './src/interaction';
 import { shopLink, shopCodeFromLink } from './src/links';
 
 type Drag = { kind: 'item' | 'group' | 'store'; id: string; shopId: string };
@@ -40,6 +40,8 @@ function useHoldDrag() {
   };
   const start = () => { clearTimeout(releaseTimer.current); held.current = true; setActive(true); dragFeedback(); };
   const stop = () => { setActive(false); clearTimeout(releaseTimer.current); releaseTimer.current = setTimeout(() => { held.current = false; }, 100); };
+  const list = useContext(ItemDragContext);
+  useEffect(() => { if (active && !list?.dragging) stop(); }, [active, list?.dragging]);
   return { held, active, start, stop, suppress };
 }
 
@@ -49,12 +51,14 @@ function ShopScroll({ page, children }: { page: ReturnType<typeof usePageBack>; 
   const size = useRef({ viewport: 0, content: 0, y: 0 });
   const autoDirection = useRef(0);
   const autoTimer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
-  const [dragging, setDragging] = useState(false);
-  const stop = () => { clearInterval(autoTimer.current); autoTimer.current = undefined; autoDirection.current = 0; setDragging(false); };
-  useEffect(() => () => clearInterval(autoTimer.current), []);
-  return <DraxView isParent style={s.flex} scrollPosition={offset} draggable={false}
-    onMonitorDragStart={() => setDragging(true)} onMonitorDragEnter={() => setDragging(true)} onMonitorDragExit={stop} onMonitorDragEnd={stop} onMonitorDragDrop={stop}
+  const list = useContext(ItemDragContext);
+  const dragging = list?.dragging ?? false;
+  const stop = () => { clearInterval(autoTimer.current); autoTimer.current = undefined; autoDirection.current = 0; };
+  useEffect(() => { if (!dragging) stop(); return stop; }, [dragging]);
+  return <DraxView isParent style={s.flex} scrollPosition={offset} draggable={false} receptive={false} onMeasure={list?.measureViewport}
+    onMonitorDragExit={stop} onMonitorDragEnd={stop} onMonitorDragDrop={stop}
     onMonitorDragOver={event => {
+      if (!dragging) return;
       autoDirection.current = event.monitorOffsetRatio.y < 0.1 ? -1 : event.monitorOffsetRatio.y > 0.9 ? 1 : 0;
       if (!autoTimer.current) autoTimer.current = setInterval(() => {
         const next = Math.max(0, Math.min(size.current.content - size.current.viewport, size.current.y + autoDirection.current * 12));
@@ -72,92 +76,117 @@ function ShopScroll({ page, children }: { page: ReturnType<typeof usePageBack>; 
 }
 const ItemEditorContext = createContext<(id: string) => void>(() => {});
 
-type ItemPreview = { source: string; target: string; after: boolean; height: number };
+type ItemPreview = { source: string; target: string; after: boolean };
 const ItemDragContext = createContext<ReturnType<typeof useListDrag> | null>(null);
 
-function useListDrag(ids: string[], commit: (preview: ItemPreview) => void) {
+const DEBUG_DRAG = false;
+function trace(session: number, phase: string, details?: unknown) {
+  if (__DEV__ && DEBUG_DRAG) console.debug('[drag]', session, phase, details);
+}
+function hoverSize(dimensions?: { width: number; height: number }) {
+  return dimensions && [dimensions.width, dimensions.height].every(n => Number.isFinite(n) && n > 0)
+    ? { width: dimensions.width, minHeight: dimensions.height } : undefined;
+}
+
+function useListDrag(ids: string[], commit: (preview: ItemPreview) => void, sort = 'manual') {
+  const sessions = useRef(dragSession()).current;
+  // These viewport views have no Drax parent, so their bounds are provider-relative.
+  const viewport = useRef<DraxViewMeasurements | undefined>(undefined);
+  const measureViewport = useCallback((bounds: DraxViewMeasurements | undefined) => { viewport.current = bounds; }, []);
+  const active = useRef<{ token: number; source: Drag; draxId: string } | null>(null);
   const [preview, setPreview] = useState<ItemPreview | null>(null);
-  const current = useRef<ItemPreview | null>(null);
-  const destination = useRef<Position | null>(null);
-  const originX = useRef(0);
-  const pending = useRef<ItemPreview | null>(null);
-  const settling = useRef(false);
-  const handoff = useRef(false);
   const latest = useRef({ ids, commit }); latest.current = { ids, commit };
-  const { hoverClearDeferredRef, hoverReadySV, dragPhaseSV, draggedIdSV, hoverPositionSV, setHoverContent } = useDraxContext();
-  const update = (next: ItemPreview | null) => { current.current = next; setPreview(next); };
-  // Keep the hover visible until the final order and zero transforms commit together.
+  const clear = (commit?: () => void) => {
+    const session = active.current;
+    if (!session || !sessions.finish(session.token, commit)) return;
+    active.current = null;
+    setPreview(null);
+    trace(session.token, 'cleanup');
+  };
   useLayoutEffect(() => {
-    if (!handoff.current) return;
-    handoff.current = false;
-    runOnUI(() => {
-      'worklet';
-      hoverReadySV.value = false; dragPhaseSV.value = 'idle'; draggedIdSV.value = ''; hoverPositionSV.value = { x: 0, y: 0 };
-    })();
-    setHoverContent(null);
+    if (active.current && (!ids.includes(active.current.source.id) || preview && !ids.includes(preview.target))) clear();
+  }, [ids, preview]);
+  useEffect(() => () => { if (active.current) sessions.finish(active.current.token); active.current = null; }, []);
+  const resolve = (event: DraxDragWithReceiverEventData, drop: boolean) => {
+    const session = active.current;
+    const target = event.receiver.payload;
+    if (!session || event.dragged.id !== session.draxId || !accepts(target, session.source.shopId, session.source.kind)) return null;
+    const receiver = event.receiver.measurements, source = event.dragged.measurements;
+    if (!receiver || !source || !latest.current.ids.includes(target.id) || !latest.current.ids.includes(session.source.id)) return null;
+    const bounds = viewport.current;
+    if (!bounds || insertionSide({ x: event.dragAbsolutePosition.x - bounds.x, y: event.dragAbsolutePosition.y - bounds.y }, bounds, source, drop) === null) return null;
+    const side = insertionSide(event.receiver.receiveOffset, receiver, source, drop);
+    const tail = 'tail' in target && target.tail === true;
+    if (side === null || tail && latest.current.ids.at(-1) !== target.id) return null;
+    return { source: session.source.id, target: target.id, after: tail || side };
+  };
+  const selection = useRef('');
+  const report = useRef(0);
+  useLayoutEffect(() => {
+    if (report.current) { trace(report.current, 'resulting order', ids); report.current = 0; }
   });
-  return { preview, shifts: preview ? itemDragLayout(ids, preview).shifts : {},
+  return { preview, measureViewport, dragging: preview !== null,
     start: (id: string, event: DraxDragEventData) => {
-      settling.current = false; pending.current = null; destination.current = null;
-      originX.current = event.dragged.hoverPosition.x;
-      update({ source: id, target: id, after: false, height: event.dragged.measurements?.height ?? 0 });
+      const token = sessions.start();
+      active.current = { token, source: event.dragged.payload as Drag, draxId: event.dragged.id };
+      selection.current = '';
+      setPreview({ source: id, target: id, after: false });
+      trace(token, 'start', { id, draxId: event.dragged.id, bounds: event.dragged.measurements, sort, pending: false });
+      return token;
     },
-    over: (target: string, event: DraxDragWithReceiverEventData, tail = false) => {
-      const previous = current.current;
-      if (!previous || settling.current) return;
-      const after = tail || event.receiver.receiveOffsetRatio.y >= 0.5;
-      const top = event.dragAbsolutePosition.y - event.receiver.receiveOffset.y;
-      destination.current = {
-        x: originX.current,
-        y: tail ? top - previous.height : dragSlotTop(latest.current.ids, { ...previous, target, after }, top, event.receiver.measurements?.height ?? 0),
-      };
-      if (previous.target !== target || previous.after !== after) update({ ...previous, target, after });
+    over: (event: DraxDragWithReceiverEventData) => {
+      const session = active.current;
+      if (!session || event.dragged.id !== session.draxId) return;
+      const next = resolve(event, false);
+      const key = next ? event.receiver.id + String(next.after) : '';
+      if (selection.current === key) return;
+      selection.current = key;
+      setPreview(next ?? { source: session.source.id, target: session.source.id, after: false });
+      trace(active.current?.token ?? 0, 'receiver', { next, id: event.receiver.id, bounds: event.receiver.measurements, hover: event.dragged.hoverPosition });
     },
-    home: (event: DraxDragEventData) => {
-      const previous = current.current;
-      if (previous && !settling.current && Math.abs(event.dragTranslation.y) < previous.height / 2) {
-        destination.current = null;
-        if (previous.target !== previous.source) update({ ...previous, target: previous.source, after: false });
-      }
+    exit: (event: DraxDragWithReceiverEventData) => {
+      if (event.dragged.id !== active.current?.draxId) return;
+      selection.current = ''; setPreview(previous => previous && { ...previous, target: previous.source }); trace(active.current.token, 'exit', event.receiver.id);
     },
-    release: (cancelled = false): DraxSnapbackTarget => {
-      settling.current = true;
-      const chosen = current.current;
-      if (cancelled || !chosen || chosen.source === chosen.target) {
-        pending.current = null;
-        if (chosen) update({ ...chosen, target: chosen.source, after: false });
-        return DraxSnapbackTargetPreset.Default;
-      }
-      pending.current = { ...chosen };
-      return destination.current ?? DraxSnapbackTargetPreset.Default;
-    },
-    finish: () => {
-      hoverClearDeferredRef.current = true;
-      handoff.current = true;
-      const chosen = pending.current; pending.current = null;
-      if (chosen) latest.current.commit(chosen);
-      update(null);
+    release: (token: number, event: DraxDragEventData, cancelled: boolean) => {
+      if (token !== active.current?.token || event.dragged.id !== active.current.draxId) return DraxSnapbackTargetPreset.None;
+      const drop = 'receiver' in event ? event as DraxDragWithReceiverEventData : undefined;
+      const chosen = drop && !cancelled ? resolve(drop, true) : null;
+      trace(token, drop ? 'drop' : 'end', { cancelled, chosen, receiver: drop?.receiver.id, pending: false });
+      clear(chosen && chosen.source !== chosen.target ? () => {
+        trace(token, 'commit attempt', chosen);
+        if (__DEV__ && DEBUG_DRAG) report.current = token;
+        latest.current.commit(chosen);
+      } : undefined);
+      return DraxSnapbackTargetPreset.None;
     },
   };
 }
 
-// The tail represents the end slot, not a row whose synthetic height can affect insertion.
 function ListTail({ shopId, kind, last }: { shopId: string; kind: Drag['kind']; last?: string }) {
   const preview = useContext(ItemDragContext);
-  const height = useWindowDimensions().height;
-  const id = useDraxId();
-  const { updateMeasurements } = useDraxContext();
-  const extendHitArea = useCallback((bounds: DraxViewMeasurements | undefined) => { if (bounds) updateMeasurements(id, { ...bounds, height }); }, [id, height, updateMeasurements]);
-  const over = (event: DraxDragWithReceiverEventData) => { if (last) preview?.over(last, event, true); };
-  return <DraxView id={id} onMeasure={extendHitArea} pointerEvents="none" draggable={false}
-    style={{ height: 0 }} acceptsDrag={payload => accepts(payload, shopId, kind)}
-    onReceiveDragEnter={over} onReceiveDragOver={over} />;
+  if (!last) return null;
+  return <DraxView draggable={false} style={{ height: 28 }} receiverPayload={{ kind, shopId, id: last, tail: true }}
+    acceptsDrag={payload => accepts(payload, shopId, kind)}
+    onReceiveDragEnter={preview?.over} onReceiveDragOver={preview?.over} onReceiveDragExit={preview?.exit} />;
+}
+
+function CategoryBadge({ shop, id }: { shop: Shop; id: string }) {
+  const tone = entityTone(id, orderedGroups(shop));
+  return <View style={[s.itemCategoryCapsule, { backgroundColor: tone.soft }]}>
+    <Icon name={shop.groups[id]?.icon ?? 'bag'} color={tone.color} size={16} />
+    <Text numberOfLines={1} ellipsizeMode="tail" style={[s.itemCategoryName, { color: tone.color }]}>{shop.groups[id]?.name ?? 'Unknown'}</Text>
+  </View>;
+}
+
+function ItemDragPreview({ shop, item }: { shop: Shop; item: Item }) {
+  return <View style={s.item}><View style={s.checkboxTarget}><View style={s.checkbox} /></View>
+    <Text style={[s.flex, s.itemName]}>{item.name}</Text><CategoryBadge shop={shop} id={item.groupId} /></View>;
 }
 
 function ItemCategory({ shop, groupId }: { shop: Shop; groupId: string }) {
   const [shown, setShown] = useState(groupId);
   const angle = useSharedValue(0);
-  const tone = entityTone(shown, orderedGroups(shop));
   useEffect(() => {
     if (groupId === shown) { angle.value = 0; return; }
     const reveal = () => {
@@ -170,18 +199,16 @@ function ItemCategory({ shop, groupId }: { shop: Shop; groupId: string }) {
     return () => { clearTimeout(timer); cancelAnimation(angle); };
   }, [groupId]);
   const flip = useAnimatedStyle(() => ({ transform: [{ perspective: 400 }, { rotateY: `${angle.value}deg` }] }));
-  return <Animated.View style={[s.itemCategoryCapsule, { backgroundColor: tone.soft, backfaceVisibility: 'hidden' }, flip]}>
-    <Icon name={shop.groups[shown]?.icon ?? 'bag'} color={tone.color} size={16} />
-    <Text numberOfLines={1} ellipsizeMode="tail" style={[s.itemCategoryName, { color: tone.color }]}>{shop.groups[shown]?.name ?? 'Unknown'}</Text>
-  </Animated.View>;
+  return <Animated.View style={[{ backfaceVisibility: 'hidden' }, flip]}><CategoryBadge shop={shop} id={shown} /></Animated.View>;
 }
 
 function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = true }: { shop: Shop; id: string; item: Item; toggle: () => void; showCategory?: boolean; manualOrder?: boolean }) {
   const editItem = useContext(ItemEditorContext);
   const preview = useContext(ItemDragContext);
-  const shift = preview?.shifts[id] ?? 0;
-  const activePreview = Boolean(preview?.preview);
-  const motion = useAnimatedStyle(() => ({ transform: [{ translateY: activePreview ? withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }] }));
+  const token = useRef(0);
+  const selected = preview?.preview;
+  const mark = selected && selected.target === id && selected.source !== id
+    ? <View pointerEvents="none" style={[s.insertionLine, selected.after ? { bottom: 0 } : { top: 0 }]} /> : null;
   const drag = useHoldDrag();
   const move = (direction: number) => {
     if (!manualOrder) return;
@@ -192,18 +219,18 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
     actions.moveItem(shop.id, id, item.groupId, ids[to + 1] ?? null);
   };
   return <Animated.View entering={FadeInUp.duration(420).withInitialValues({ opacity: 0, transform: [{ translateY: -56 }] }).easing(Easing.out(Easing.cubic)).reduceMotion(ReduceMotion.System)} exiting={item.done ? FadeOutDown.duration(220).reduceMotion(ReduceMotion.System) : fadeOut} collapsable={false}>
-    <DraxView dragHandle snapDelay={0} snapDuration={180} lockDragXPosition draggable={!item.done && manualOrder} receptive={!item.done && manualOrder} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-      dragPayload={{ kind: 'item', id, shopId: shop.id } satisfies Drag}
+    <DraxView dragHandle lockDragXPosition draggable={!item.done && manualOrder} receptive={!item.done && manualOrder} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+      renderHoverContent={({ dimensions }) => <View pointerEvents="none" style={[{ backgroundColor: c.white }, hoverSize(dimensions)]}><ItemDragPreview shop={shop} item={item} /></View>}
+      payload={{ kind: 'item', id, shopId: shop.id } satisfies Drag}
       acceptsDrag={payload => accepts(payload, shop.id, 'item') && payload.id !== id}
-      onDragStart={event => { drag.start(); preview?.start(id, event); }}
-      onDrag={event => preview?.home(event)}
-      onDragEnd={event => { drag.stop(); return preview?.release(event.cancelled); }}
-      onDragDrop={() => { drag.stop(); return preview?.release(); }} onSnapEnd={() => preview?.finish()}
-      onReceiveDragEnter={event => preview?.over(id, event)} onReceiveDragOver={event => preview?.over(id, event)}
+      onDragStart={event => { drag.start(); token.current = preview?.start(id, event) ?? 0; }}
+      onDragEnd={event => { drag.stop(); return preview?.release(token.current, event, event.cancelled); }}
+      onDragDrop={event => { drag.stop(); return preview?.release(token.current, event, false); }} onSnapEnd={() => trace(token.current, 'snap complete')}
+      onReceiveDragEnter={preview?.over} onReceiveDragOver={preview?.over} onReceiveDragExit={preview?.exit}
       style={s.itemDrop} draggingStyle={s.itemDragOrigin} hoverDraggingStyle={s.dragging}
      >
       <SwipeToDelete label={item.name} onDelete={() => actions.deleteItem(shop.id, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
-        <Animated.View style={motion}><View style={s.item}>
+        <View><View style={s.item}>
           <DraxHandle style={StyleSheet.absoluteFill}><View style={s.item}>
           <Pressable accessibilityRole="checkbox" accessibilityLabel={`${item.name}, ${item.done ? 'picked up' : 'to get'}`} accessibilityState={{ checked: item.done }}
             onPress={() => { if (!drag.held.current) toggle(); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} style={s.checkboxTarget}>
@@ -226,7 +253,7 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
             <ItemCategory shop={shop} groupId={item.groupId} />
           </Pressable>, s.itemCategoryAction)}
           </View>
-        </View></Animated.View>}
+        </View>{mark}</View>}
       </SwipeToDelete>
     </DraxView>
   </Animated.View>;
@@ -299,9 +326,10 @@ function AddStore({ open, close }: { open: (id: string) => void; close: () => vo
 function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Shop; shops: Shop[]; open: (id: string) => void; share: () => void; edit: () => void; editing: boolean; close: () => void }) {
   const drag = useHoldDrag();
   const preview = useContext(ItemDragContext);
-  const shift = preview?.shifts[shop.id] ?? 0;
-  const activePreview = Boolean(preview?.preview);
-  const motion = useAnimatedStyle(() => ({ transform: [{ translateY: activePreview ? withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }] }));
+  const token = useRef(0);
+  const selected = preview?.preview;
+  const mark = selected && selected.target === shop.id && selected.source !== shop.id
+    ? <View pointerEvents="none" style={[s.insertionLine, selected.after ? { bottom: 0 } : { top: 0 }]} /> : null;
   const tone = entityTone(shop.id, shops.map(shop => shop.id));
   const move = (direction: number) => {
     const order = shops.map(s => s.id); const from = order.indexOf(shop.id); const to = from + direction;
@@ -309,17 +337,17 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
     [order[from], order[to]] = [order[to], order[from]]; actions.reorderShops(order);
   };
   return <Animated.View entering={fadeIn} exiting={fadeOut} collapsable={false}>
-    {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle lockDragXPosition style={s.dropTarget} snapDelay={0} snapDuration={180} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-      dragPayload={{ kind: 'store', id: shop.id, shopId: '' } satisfies Drag}
+    {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle lockDragXPosition style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+      renderHoverContent={({ dimensions }) => <View pointerEvents="none" style={[{ backgroundColor: c.white }, hoverSize(dimensions)]}><View style={s.storeRow}><View style={[s.storeBadge, { backgroundColor: tone.soft }]}><Text style={[s.storeInitials, { color: tone.color }]}>{storeInitials(shop.name)}</Text></View><Text style={[s.flex, s.storeName]}>{shop.name}</Text><Icon name="right" color={tone.color} /></View></View>}
+      payload={{ kind: 'store', id: shop.id, shopId: '' } satisfies Drag}
       acceptsDrag={payload => accepts(payload, '', 'store') && payload.id !== shop.id}
-      onDragStart={event => { drag.start(); preview?.start(shop.id, event); }}
-      onDrag={event => preview?.home(event)}
-      onDragEnd={event => { drag.stop(); return preview?.release(event.cancelled); }}
-      onDragDrop={() => { drag.stop(); return preview?.release(); }} onSnapEnd={() => preview?.finish()}
-      onReceiveDragEnter={event => preview?.over(shop.id, event)} onReceiveDragOver={event => preview?.over(shop.id, event)}
+      onDragStart={event => { drag.start(); token.current = preview?.start(shop.id, event) ?? 0; }}
+      onDragEnd={event => { drag.stop(); return preview?.release(token.current, event, event.cancelled); }}
+      onDragDrop={event => { drag.stop(); return preview?.release(token.current, event, false); }} onSnapEnd={() => trace(token.current, 'snap complete')}
+      onReceiveDragEnter={preview?.over} onReceiveDragOver={preview?.over} onReceiveDragExit={preview?.exit}
       draggingStyle={s.itemDragOrigin} hoverDraggingStyle={s.dragging}>
       <SwipeToDelete label={shop.name} onDelete={() => actions.removeShop(shop.id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
-        <Animated.View style={motion}><View style={s.storeRow}>
+        <View><View style={s.storeRow}>
           <DraxHandle style={StyleSheet.absoluteFill}><View style={s.storeDragArea} pointerEvents="box-none">
             <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel={`Open ${shop.name} row`}
               onPress={() => { if (!drag.held.current) open(shop.id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} />
@@ -338,7 +366,7 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
             </Pressable>
           </View>
           <IconButton icon="share" color={tone.color} solid={shop.shared} label={`Share ${shop.name}${shop.shared ? ', shared store' : ''}`} style={s.storeShareButton} onPress={() => { if (!drag.held.current) share(); }} />
-        </View></Animated.View>}
+        </View>{mark}</View>}
       </SwipeToDelete>
     </DraxView>}
   </Animated.View>;
@@ -348,7 +376,11 @@ function ShopList({ open }: { open: (id: string) => void }) {
   const { data } = useShops();
   const [adding, setAdding] = useState(false);
   const order = data.shops.map(shop => shop.id);
-  const dragList = useListDrag(order, chosen => actions.reorderShops(dragOrder(order, chosen)));
+  const dragList = useListDrag(order, chosen => {
+    const current = getShopSnapshot().data.shops.map(shop => shop.id);
+    const next = dragOrder(current, chosen);
+    if (next !== current) actions.reorderShops(next);
+  });
   const [editing, setEditing] = useState<string | null>(null);
   const [sharing, setSharing] = useState<string | null>(null);
   const sharedShop = data.shops.find(shop => shop.id === sharing);
@@ -356,13 +388,13 @@ function ShopList({ open }: { open: (id: string) => void }) {
   useEffect(() => { if (editing) requestAnimationFrame(() => scroll.current?.scrollTo({ y: 0, animated: true })); }, [editing]);
   return <ItemDragContext.Provider value={dragList}><View style={s.flex}>
     <View style={s.homeHeader}><View style={s.titleRow}><View style={s.flex}><Text accessibilityRole="header" style={s.title}>Stores</Text></View></View></View>
-    <DraxScrollView ref={instance => { scroll.current = instance as unknown as React.ComponentRef<typeof ScrollView>; }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} contentContainerStyle={s.storesContent} style={s.flex}>
+    <DraxView style={s.flex} draggable={false} receptive={false} onMeasure={dragList.measureViewport}><DraxScrollView ref={instance => { scroll.current = instance as unknown as React.ComponentRef<typeof ScrollView>; }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} contentContainerStyle={s.storesContent} style={s.flex}>
       {editing && data.shops.some(shop => shop.id === editing) && <NameEditor name={data.shops.find(shop => shop.id === editing)!.name} label="Edit store name" save={name => actions.renameShop(editing, name)} close={() => setEditing(null)} />}
       <View style={s.storeRows}><View>{data.shops.map(shop => <StoreRow key={shop.id} shop={shop} shops={data.shops} open={open} share={() => setSharing(shop.id)}
         editing={false} edit={() => setEditing(shop.id)} close={() => setEditing(null)} />)}</View></View>
       <ListTail shopId="" kind="store" last={order.at(-1)} />
       {!data.shops.length && <View style={s.emptyStores}><Icon name="bag" size={32} /><Text style={s.emptyTitle}>Your first store</Text><Text style={s.caption}>Tap + to create a store or join by ID.</Text></View>}
-    </DraxScrollView>
+    </DraxScrollView></DraxView>
     {!adding && <FloatingAddButton label="Add store" accessibilityLabel="Add or join a store" onPress={() => setAdding(true)} />}
     {adding && <AddStore open={open} close={() => setAdding(false)} />}
     {sharedShop && <ShareShop shop={sharedShop} replaced={setSharing} close={() => setSharing(null)} />}
@@ -446,14 +478,14 @@ function ItemArrival({ shop, item, close, start, end }: { shop: Shop; item: { na
 
 function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: string[]; change: (order: string[]) => void; close: () => void }) {
   const order = mergeCategoryOrder(orderedGroups(shop), draft);
-  const dragList = useListDrag(order, chosen => change(dragOrder(order, chosen)));
+  const dragList = useListDrag(order, chosen => { const next = dragOrder(order, chosen); if (next !== order) change(next); });
   return <ItemDragContext.Provider value={dragList}><View style={s.categoryOrderPage}>
     <Text style={s.editorHeading}>Category order</Text>
     <Text style={s.caption}>Hold anywhere on a row and drag. Changes apply when you close this panel.</Text>
-    <DraxScrollView style={s.flex} contentContainerStyle={{ paddingTop: 12, paddingBottom: 20, flexGrow: 1 }} bounces={false}>
+    <DraxView style={s.flex} draggable={false} receptive={false} onMeasure={dragList.measureViewport}><DraxScrollView style={s.flex} contentContainerStyle={{ paddingTop: 12, paddingBottom: 20, flexGrow: 1 }} bounces={false}>
       <View>{order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} />)}</View>
       <ListTail shopId={shop.id} kind="group" last={order.at(-1)} />
-    </DraxScrollView>
+    </DraxScrollView></DraxView>
     <Button label="Done sorting categories" onPress={close} />
   </View></ItemDragContext.Provider>;
 }
@@ -461,9 +493,10 @@ function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: stri
 function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string; order: string[]; change: (order: string[]) => void }) {
   const drag = useHoldDrag();
   const preview = useContext(ItemDragContext);
-  const shift = preview?.shifts[id] ?? 0;
-  const activePreview = Boolean(preview?.preview);
-  const motion = useAnimatedStyle(() => ({ transform: [{ translateY: activePreview ? withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }] }));
+  const token = useRef(0);
+  const selected = preview?.preview;
+  const mark = selected && selected.target === id && selected.source !== id
+    ? <View pointerEvents="none" style={[s.insertionLine, selected.after ? { bottom: 0 } : { top: 0 }]} /> : null;
   const tone = entityTone(id, orderedGroups(shop));
   const group = shop.groups[id];
   const move = (direction: number) => {
@@ -472,19 +505,19 @@ function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string;
     const next = [...order]; [next[index], next[to]] = [next[to], next[index]]; change(next);
   };
   const content = <><View style={[s.itemCategory, { backgroundColor: tone.soft }]}><Icon name={group.icon ?? 'bag'} color={tone.color} /></View><Text style={[s.groupName, { color: tone.color }]}>{group.name}</Text></>;
-  return <Animated.View><DraxView lockDragXPosition snapDelay={0} snapDuration={180} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-    dragPayload={{ kind: 'group', id, shopId: shop.id } satisfies Drag} acceptsDrag={payload => accepts(payload, shop.id, 'group') && payload.id !== id}
-    onDragStart={event => { drag.start(); preview?.start(id, event); }}
-    onDrag={event => preview?.home(event)}
-      onDragEnd={event => { drag.stop(); return preview?.release(event.cancelled); }}
-    onDragDrop={() => { drag.stop(); return preview?.release(); }} onSnapEnd={() => preview?.finish()}
-    onReceiveDragEnter={event => preview?.over(id, event)} onReceiveDragOver={event => preview?.over(id, event)}
+  return <Animated.View><DraxView lockDragXPosition style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+    renderHoverContent={({ dimensions }) => <View pointerEvents="none" style={[{ backgroundColor: c.white }, hoverSize(dimensions)]}><View style={s.categoryOrderRow}>{content}</View></View>}
+      payload={{ kind: 'group', id, shopId: shop.id } satisfies Drag} acceptsDrag={payload => accepts(payload, shop.id, 'group') && payload.id !== id}
+    onDragStart={event => { drag.start(); token.current = preview?.start(id, event) ?? 0; }}
+      onDragEnd={event => { drag.stop(); return preview?.release(token.current, event, event.cancelled); }}
+    onDragDrop={event => { drag.stop(); return preview?.release(token.current, event, false); }} onSnapEnd={() => trace(token.current, 'snap complete')}
+    onReceiveDragEnter={preview?.over} onReceiveDragOver={preview?.over} onReceiveDragExit={preview?.exit}
     draggingStyle={s.itemDragOrigin} hoverDraggingStyle={s.dragging}>
-    <Animated.View style={motion}><Pressable style={s.categoryOrderRow} accessibilityRole="button" accessibilityLabel={`${group.name} category order`} accessibilityHint="Hold anywhere to drag. Alt+Up or Alt+Down also moves the category."
+    <View><Pressable style={s.categoryOrderRow} accessibilityRole="button" accessibilityLabel={`${group.name} category order`} accessibilityHint="Hold anywhere to drag. Alt+Up or Alt+Down also moves the category."
       accessibilityActions={[{ name: 'increment', label: 'Move later' }, { name: 'decrement', label: 'Move earlier' }]}
       onAccessibilityAction={event => move(event.nativeEvent.actionName === 'increment' ? 1 : -1)}
       onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp','ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}
-      onLongPress={() => {}} delayLongPress={DRAG_DELAY}>{content}</Pressable></Animated.View>
+      onLongPress={() => {}} delayLongPress={DRAG_DELAY}>{content}</Pressable>{mark}</View>
   </DraxView></Animated.View>;
 }
 
@@ -639,12 +672,6 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
   const startSorting = () => { setMenuOpen(false); setCategoryDraft(orderedGroups(shop)); setTopAdding(false); setEditingItem(null); setNewGroup(false); };
   const [arrival, setArrival] = useState<{ id: string; name: string; groupId: string } | null>(null);
   const itemSort = data.itemSort ?? 'group';
-  const page = usePageBack(back, !editingStore && !topAdding && !editingItem && !newGroup && !sortingGroups && !menuOpen);
-  const closePage = () => { if (sortingGroups) finishSorting(); else page.close(); };
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => { closePage(); return true; });
-    return () => sub.remove();
-  }, [page.close, categoryDraft, shop]);
   const [checking, setChecking] = useState<Set<string>>(() => new Set());
   const checkTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   useEffect(() => () => { for (const timer of checkTimers.current.values()) clearTimeout(timer); }, []);
@@ -662,13 +689,19 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
   const groups = orderedGroups(shop);
   const picked = doneItems(shop).filter(([id]) => !checking.has(id));
   const flatItems = listItems(displayShop, itemSort);
-  const itemDrag = useListDrag(flatItems.map(([id]) => id), chosen => {
-    const target = shop.items[chosen.target];
-    if (!target || target.deleted) return;
-    const ids = activeItems(shop, target.groupId).map(([id]) => id).filter(id => id !== chosen.source);
-    const before = chosen.after ? ids[ids.indexOf(chosen.target) + 1] ?? null : chosen.target;
-    actions.moveItem(shop.id, chosen.source, target.groupId, before);
-  });
+  const itemDrag = useListDrag(itemSort === 'group' ? listItems(shop).map(([id]) => id) : [], chosen => {
+    const { data } = getShopSnapshot();
+    const currentShop = data.shops.find(entry => entry.id === shop.id);
+    if (!currentShop || (data.itemSort ?? 'group') !== 'group') return;
+    const slot = itemDropSlot(currentShop, chosen.source, chosen.target, chosen.after);
+    if (slot) actions.moveItem(shop.id, chosen.source, slot.groupId, slot.beforeId);
+  }, itemSort);
+  const page = usePageBack(back, !itemDrag.dragging && !editingStore && !topAdding && !editingItem && !newGroup && !sortingGroups && !menuOpen);
+  const closePage = () => { if (sortingGroups) finishSorting(); else page.close(); };
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { closePage(); return true; });
+    return () => sub.remove();
+  }, [page.close, categoryDraft, shop]);
   const completed = picked;
   return <Animated.View style={s.flex} entering={SlideInDown.duration(240).easing(Easing.bezier(0.22, 1, 0.36, 1)).reduceMotion(ReduceMotion.System)}><GestureDetector gesture={page.edge} touchAction="pan-y"><Animated.View style={[s.flex, s.shopPage, page.style]}>
     <View style={s.listHeader} onLayout={event => setHeaderHeight(event.nativeEvent.layout.height)}>
@@ -762,7 +795,12 @@ function Main() {
     {Platform.OS === 'web' && invite && <View style={s.errorBanner}><Text style={[s.caption, s.flex]}>Have Shoppendo installed?</Text><Pressable accessibilityRole="link" style={s.retry} onPress={() => { void Linking.openURL(`shoppendo://join/${invite.code}`).catch(() => setLinkError('Could not open the app. You can use this store in your browser.')); }}><Text style={s.link}>Open app</Text></Pressable></View>}
     {Boolean(error) && <View accessibilityRole="alert" style={s.errorBanner}><Text style={[s.caption, s.flex]}>{error}</Text><Pressable accessibilityRole="button" onPress={() => { actions.clearError(); void actions.retry().catch(() => {}); }} style={s.retry}><Text style={s.link}>Retry</Text></Pressable></View>}
     <View style={s.flex}>
-      <View {...(Platform.OS === 'web' ? { inert: Boolean(shop) } : {})} style={s.flex} pointerEvents={shop ? 'none' : 'auto'} accessibilityElementsHidden={Boolean(shop)} importantForAccessibility={shop ? 'no-hide-descendants' : 'auto'} aria-hidden={Boolean(shop)}><ShopList open={setSelected} /></View>
+      {/* Keep the stores visible behind the back gesture, with their own receiver registry. */}
+      <View {...(Platform.OS === 'web' ? { inert: Boolean(shop) } : {})} style={s.flex}
+        pointerEvents={shop ? 'none' : 'auto'} accessibilityElementsHidden={Boolean(shop)}
+        importantForAccessibility={shop ? 'no-hide-descendants' : 'auto'} aria-hidden={Boolean(shop)}>
+        <DraxProvider><ShopList open={setSelected} /></DraxProvider>
+      </View>
       {shop && <View style={StyleSheet.absoluteFill}><ShoppingList key={shop.id} shop={shop} replaced={setSelected} back={() => setSelected(null)} /></View>}
     </View>
     {undo && <Animated.View entering={fadeIn} exiting={fadeOut} style={s.undoBanner} accessibilityLiveRegion="polite">
@@ -852,7 +890,8 @@ const s = StyleSheet.create({
   listContent: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 112 },
   group: { paddingBottom: 16, backgroundColor: c.white, borderRadius: 12 },
   dragging: { backgroundColor: c.white, borderRadius: 12, zIndex: 1000, elevation: 24, shadowColor: c.text, shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-  itemDragOrigin: { opacity: 0 },
+  insertionLine: { position: 'absolute', left: 0, right: 0, height: 2, backgroundColor: c.primary },
+  itemDragOrigin: { opacity: 0.25 },
   dragOrigin: { opacity: 0.25 }, groupReceiving: { backgroundColor: c.primarySoft, borderColor: c.primary },
   itemDrop: { borderRadius: 5 },
   dropBefore: { borderTopColor: c.primary, borderBottomColor: 'transparent', backgroundColor: c.primarySoft }, dropAfter: { borderTopColor: 'transparent', borderBottomColor: c.primary, backgroundColor: c.primarySoft },

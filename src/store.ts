@@ -141,8 +141,10 @@ function refreshWatchers() {
   }
 }
 
+export const getShopSnapshot = () => view;
+
 export function useShops() {
-  return useSyncExternalStore(listener => { listeners.add(listener); return () => listeners.delete(listener); }, () => view);
+  return useSyncExternalStore(listener => { listeners.add(listener); return () => listeners.delete(listener); }, getShopSnapshot);
 }
 
 export const actions = {

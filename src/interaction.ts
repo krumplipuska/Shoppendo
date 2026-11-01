@@ -47,9 +47,33 @@ export function dragOrder(ids: string[], drag: { source: string; target: string;
   if (drag.source === drag.target || !ids.includes(drag.source) || !ids.includes(drag.target)) return ids;
   const next = ids.filter(id => id !== drag.source);
   next.splice(next.indexOf(drag.target) + (drag.after ? 1 : 0), 0, drag.source);
-  return next;
+  return next.every((id, index) => ids[index] === id) ? ids : next;
 }
 
 export function dragSlotTop(ids: string[], drag: { source: string; target: string; after: boolean; height: number }, targetTop: number, targetHeight: number) {
   return targetTop + (drag.after ? targetHeight : 0) - (ids.indexOf(drag.source) < ids.indexOf(drag.target) ? drag.height : 0);
+}
+
+// Drax 1.1 movement offsets describe the hover centre. Drop offsets describe its top-left.
+export function insertionSide(offset: { x: number; y: number }, receiver: { width: number; height: number },
+  source: { width: number; height: number }, drop: boolean) {
+  if (![receiver.width, receiver.height, source.width, source.height].every(n => Number.isFinite(n) && n > 0)) return null;
+  const x = offset.x + (drop ? source.width / 2 : 0);
+  const y = offset.y + (drop ? source.height / 2 : 0);
+  if (!(x >= 0 && x <= receiver.width && y >= 0 && y <= receiver.height)) return null;
+  return y >= receiver.height / 2;
+}
+
+export function dragSession() {
+  let sequence = 0;
+  let active = 0;
+  return {
+    start() { active = ++sequence; return active; },
+    finish(token: number, commit?: () => void) {
+      if (!active || active !== token) return false;
+      active = 0;
+      commit?.();
+      return true;
+    },
+  };
 }
