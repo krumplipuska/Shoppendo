@@ -48,6 +48,13 @@ function limitDone(next: SavedState) {
   return next;
 }
 
+let dragDepth = 0;
+
+function scheduleFlush(delay = 750) {
+  if (dragDepth > 0 || syncTimer) return;
+  syncTimer = setTimeout(() => { syncTimer = undefined; void flush(); }, delay);
+}
+
 function persist(next: SavedState) {
   next = limitDone(next);
   const outboxChanged = next.outbox !== saved.outbox;
@@ -63,9 +70,7 @@ function persist(next: SavedState) {
   void write.then(() => {
     // Use a bounded window so continuous edits cannot postpone syncing forever.
     // Remote snapshots and local preferences must not flush pending edits early.
-    if (outboxChanged && saved.outbox.length && !syncTimer) {
-      syncTimer = setTimeout(() => { syncTimer = undefined; void flush(); }, 750);
-    }
+    if (outboxChanged && saved.outbox.length) scheduleFlush();
   }).catch(() => {});
   return write;
 }
@@ -96,6 +101,7 @@ export async function load() {
 export function flush() {
   clearTimeout(syncTimer);
   syncTimer = undefined;
+  if (dragDepth > 0) return Promise.resolve();
   if (!firebaseConfigured || !view.ready) return Promise.resolve();
   if (!saved.outbox.length) { refreshWatchers(); return Promise.resolve(); }
   syncing ??= (async () => {
@@ -146,6 +152,11 @@ export function useShops() {
 }
 
 export const actions = {
+  beginDrag() { dragDepth += 1; },
+  endDrag() {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0 && saved.outbox.length) scheduleFlush(0);
+  },
   undo() {
     const restore = view.undo?.restore;
     clearTimeout(undoTimer); notify({ undo: null }); restore?.();
@@ -299,5 +310,5 @@ export const actions = {
 };
 
 // Retry while active; flush the short batching window on app state transitions.
-setInterval(() => { if (view.ready && AppState.currentState === 'active') void flush(); }, 15000);
-AppState.addEventListener('change', () => { void flush(); });
+setInterval(() => { if (view.ready && AppState.currentState === 'active' && dragDepth === 0) void flush(); }, 15000);
+AppState.addEventListener('change', () => { if (dragDepth === 0) void flush(); });

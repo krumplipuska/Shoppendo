@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -74,9 +74,30 @@ const ItemEditorContext = createContext<(id: string) => void>(() => {});
 
 type ItemPreview = { source: string; target: string; after: boolean; height: number };
 const ItemDragContext = createContext<ReturnType<typeof useListDrag> | null>(null);
+type DragGhostApi = { show: (content: ReactNode) => void; hide: () => void };
+const DragGhostContext = createContext<DragGhostApi>({ show: () => {}, hide: () => {} });
+
+/** App-owned floating drag preview — Drax HoverLayer stays blank under Reanimated/noHover. */
+function DragGhostHost({ children }: { children: ReactNode }) {
+  const { hoverPositionSV } = useDraxContext();
+  const activeSV = useSharedValue(0);
+  const [content, setContent] = useState<ReactNode>(null);
+  const show = useCallback((node: ReactNode) => { setContent(node); }, []);
+  const hide = useCallback(() => { activeSV.value = 0; setContent(null); }, [activeSV]);
+  useLayoutEffect(() => { if (content != null) activeSV.value = 1; }, [content, activeSV]);
+  const style = useAnimatedStyle(() => ({
+    opacity: activeSV.value,
+    transform: [{ translateX: hoverPositionSV.value.x }, { translateY: hoverPositionSV.value.y }],
+  }));
+  const api = useMemo(() => ({ show, hide }), [show, hide]);
+  return <DragGhostContext.Provider value={api}>{children}
+    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, s.dragGhostLayer, style]}>{content}</Animated.View>
+  </DragGhostContext.Provider>;
+}
 
 function useListDrag(ids: string[], commit: (preview: ItemPreview) => void) {
   const [preview, setPreview] = useState<ItemPreview | null>(null);
+  const [handoffRevision, setHandoffRevision] = useState(0);
   const current = useRef<ItemPreview | null>(null);
   const destination = useRef<Position | null>(null);
   const originX = useRef(0);
@@ -84,6 +105,7 @@ function useListDrag(ids: string[], commit: (preview: ItemPreview) => void) {
   const settling = useRef(false);
   const handoff = useRef(false);
   const latest = useRef({ ids, commit }); latest.current = { ids, commit };
+  const ghost = useContext(DragGhostContext);
   const { hoverClearDeferredRef, hoverReadySV, dragPhaseSV, draggedIdSV, hoverPositionSV, setHoverContent } = useDraxContext();
   const update = (next: ItemPreview | null) => { current.current = next; setPreview(next); };
   // Keep the hover visible until the final order and zero transforms commit together.
@@ -95,11 +117,14 @@ function useListDrag(ids: string[], commit: (preview: ItemPreview) => void) {
       hoverReadySV.value = false; dragPhaseSV.value = 'idle'; draggedIdSV.value = ''; hoverPositionSV.value = { x: 0, y: 0 };
     })();
     setHoverContent(null);
-  });
+    ghost.hide();
+    actions.endDrag();
+  }, [handoffRevision, hoverReadySV, dragPhaseSV, draggedIdSV, hoverPositionSV, setHoverContent, ghost]);
   return { preview, shifts: preview ? itemDragLayout(ids, preview).shifts : {},
     start: (id: string, event: DraxDragEventData) => {
       settling.current = false; pending.current = null; destination.current = null;
       originX.current = event.dragged.hoverPosition.x;
+      actions.beginDrag();
       update({ source: id, target: id, after: false, height: event.dragged.measurements?.height ?? 0 });
     },
     over: (target: string, event: DraxDragWithReceiverEventData, tail = false) => {
@@ -132,11 +157,13 @@ function useListDrag(ids: string[], commit: (preview: ItemPreview) => void) {
       return destination.current ?? DraxSnapbackTargetPreset.Default;
     },
     finish: () => {
+      // Commit first; ghost.hide runs in the handoff layout effect after the settled row paints.
       hoverClearDeferredRef.current = true;
       handoff.current = true;
       const chosen = pending.current; pending.current = null;
       if (chosen) latest.current.commit(chosen);
       update(null);
+      setHandoffRevision(revision => revision + 1);
     },
   };
 }
@@ -176,13 +203,30 @@ function ItemCategory({ shop, groupId }: { shop: Shop; groupId: string }) {
   </Animated.View>;
 }
 
+/** Static drag hover clone — no swipe/handle/gesture wrappers (default Drax child clone is blank under Reanimated). */
+function dragHoverRow(dimensions: { width: number; height: number } | undefined, style: React.ComponentProps<typeof View>['style'], children: React.ReactNode) {
+  return <View pointerEvents="none" style={[style, dimensions]}>{children}</View>;
+}
+
+function ItemCategoryMark({ shop, groupId }: { shop: Shop; groupId: string }) {
+  const tone = entityTone(groupId, orderedGroups(shop));
+  const group = shop.groups[groupId];
+  return <View style={[s.itemCategoryCapsule, { backgroundColor: tone.soft }]}>
+    <Icon name={group?.icon ?? 'bag'} color={tone.color} size={16} />
+    <Text numberOfLines={1} ellipsizeMode="tail" style={[s.itemCategoryName, { color: tone.color }]}>{group?.name ?? 'Unknown'}</Text>
+  </View>;
+}
+
 function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = true }: { shop: Shop; id: string; item: Item; toggle: () => void; showCategory?: boolean; manualOrder?: boolean }) {
   const editItem = useContext(ItemEditorContext);
   const preview = useContext(ItemDragContext);
+  const ghost = useContext(DragGhostContext);
   const shift = preview?.shifts[id] ?? 0;
   const activePreview = Boolean(preview?.preview);
   const motion = useAnimatedStyle(() => ({ transform: [{ translateY: activePreview ? withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }] }));
   const drag = useHoldDrag();
+  // Keep the list row hidden while the floating ghost represents it (through snap), not only while the gesture is held.
+  const lifted = drag.active || preview?.preview?.source === id;
   const move = (direction: number) => {
     if (!manualOrder) return;
     const ids = activeItems(shop, item.groupId).map(([key]) => key);
@@ -191,16 +235,29 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
     ids.splice(index, 1); ids.splice(to, 0, id);
     actions.moveItem(shop.id, id, item.groupId, ids[to + 1] ?? null);
   };
+  const lift = (event: DraxDragEventData) => {
+    drag.start(); preview?.start(id, event);
+    const dims = event.dragged.measurements ? { width: event.dragged.measurements.width, height: event.dragged.measurements.height } : undefined;
+    ghost.show(dragHoverRow(dims, [s.item, s.dragging], <>
+      <View style={[StyleSheet.absoluteFill, s.item]}>
+        <View style={s.checkboxTarget}><View style={[s.checkbox, item.done && s.checked]}>{item.done && <Icon name="check" size={15} color={c.white} />}</View></View>
+      </View>
+      <View style={s.itemTextOverlay}>
+        <View style={s.flex}><Text style={[s.itemName, item.done && s.doneName]}>{item.name}</Text></View>
+        {showCategory && <ItemCategoryMark shop={shop} groupId={item.groupId} />}
+      </View>
+    </>));
+  };
   return <Animated.View entering={FadeInUp.duration(420).withInitialValues({ opacity: 0, transform: [{ translateY: -56 }] }).easing(Easing.out(Easing.cubic)).reduceMotion(ReduceMotion.System)} exiting={item.done ? FadeOutDown.duration(220).reduceMotion(ReduceMotion.System) : fadeOut} collapsable={false}>
-    <DraxView dragHandle snapDelay={0} snapDuration={180} lockDragXPosition draggable={!item.done && manualOrder} receptive={!item.done && manualOrder} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+    <DraxView dragHandle snapDelay={0} snapDuration={180} lockDragXPosition noHover draggable={!item.done && manualOrder} receptive={!item.done && manualOrder} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
       dragPayload={{ kind: 'item', id, shopId: shop.id } satisfies Drag}
       acceptsDrag={payload => accepts(payload, shop.id, 'item') && payload.id !== id}
-      onDragStart={event => { drag.start(); preview?.start(id, event); }}
+      onDragStart={lift}
       onDrag={event => preview?.home(event)}
-      onDragEnd={event => { drag.stop(); return preview?.release(event.cancelled); }}
-      onDragDrop={() => { drag.stop(); return preview?.release(); }} onSnapEnd={() => preview?.finish()}
+      onDragEnd={event => preview?.release(event.cancelled)}
+      onDragDrop={() => preview?.release()} onSnapEnd={() => { drag.stop(); preview?.finish(); }}
       onReceiveDragEnter={event => preview?.over(id, event)} onReceiveDragOver={event => preview?.over(id, event)}
-      style={s.itemDrop} draggingStyle={s.itemDragOrigin} hoverDraggingStyle={s.dragging}
+      style={[s.itemDrop, lifted && s.itemDragOrigin]}
      >
       <SwipeToDelete label={item.name} onDelete={() => actions.deleteItem(shop.id, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
         <Animated.View style={motion}><View style={s.item}>
@@ -299,25 +356,34 @@ function AddStore({ open, close }: { open: (id: string) => void; close: () => vo
 function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Shop; shops: Shop[]; open: (id: string) => void; share: () => void; edit: () => void; editing: boolean; close: () => void }) {
   const drag = useHoldDrag();
   const preview = useContext(ItemDragContext);
+  const ghost = useContext(DragGhostContext);
   const shift = preview?.shifts[shop.id] ?? 0;
   const activePreview = Boolean(preview?.preview);
   const motion = useAnimatedStyle(() => ({ transform: [{ translateY: activePreview ? withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }] }));
+  const lifted = drag.active || preview?.preview?.source === shop.id;
   const tone = entityTone(shop.id, shops.map(shop => shop.id));
   const move = (direction: number) => {
     const order = shops.map(s => s.id); const from = order.indexOf(shop.id); const to = from + direction;
     if (to < 0 || to >= order.length) return;
     [order[from], order[to]] = [order[to], order[from]]; actions.reorderShops(order);
   };
+  const lift = (event: DraxDragEventData) => {
+    drag.start(); preview?.start(shop.id, event);
+    const dims = event.dragged.measurements ? { width: event.dragged.measurements.width, height: event.dragged.measurements.height } : undefined;
+    ghost.show(dragHoverRow(dims, [s.storeRow, { marginBottom: 0 }, s.dragging], <>
+      <View style={[s.storeBadge, { backgroundColor: tone.soft }]}><Text style={[s.storeInitials, { color: tone.color }]}>{storeInitials(shop.name)}</Text></View>
+      <View style={s.flex}><Text numberOfLines={1} style={s.storeName}>{shop.name}</Text></View>
+    </>));
+  };
   return <Animated.View entering={fadeIn} exiting={fadeOut} collapsable={false}>
-    {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle lockDragXPosition style={s.dropTarget} snapDelay={0} snapDuration={180} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+    {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle lockDragXPosition noHover style={[s.dropTarget, lifted && s.itemDragOrigin]} snapDelay={0} snapDuration={180} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
       dragPayload={{ kind: 'store', id: shop.id, shopId: '' } satisfies Drag}
       acceptsDrag={payload => accepts(payload, '', 'store') && payload.id !== shop.id}
-      onDragStart={event => { drag.start(); preview?.start(shop.id, event); }}
+      onDragStart={lift}
       onDrag={event => preview?.home(event)}
-      onDragEnd={event => { drag.stop(); return preview?.release(event.cancelled); }}
-      onDragDrop={() => { drag.stop(); return preview?.release(); }} onSnapEnd={() => preview?.finish()}
-      onReceiveDragEnter={event => preview?.over(shop.id, event)} onReceiveDragOver={event => preview?.over(shop.id, event)}
-      draggingStyle={s.itemDragOrigin} hoverDraggingStyle={s.dragging}>
+      onDragEnd={event => preview?.release(event.cancelled)}
+      onDragDrop={() => preview?.release()} onSnapEnd={() => { drag.stop(); preview?.finish(); }}
+      onReceiveDragEnter={event => preview?.over(shop.id, event)} onReceiveDragOver={event => preview?.over(shop.id, event)}>
       <SwipeToDelete label={shop.name} onDelete={() => actions.removeShop(shop.id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
         <Animated.View style={motion}><View style={s.storeRow}>
           <DraxHandle style={StyleSheet.absoluteFill}><View style={s.storeDragArea} pointerEvents="box-none">
@@ -461,9 +527,11 @@ function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: stri
 function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string; order: string[]; change: (order: string[]) => void }) {
   const drag = useHoldDrag();
   const preview = useContext(ItemDragContext);
+  const ghost = useContext(DragGhostContext);
   const shift = preview?.shifts[id] ?? 0;
   const activePreview = Boolean(preview?.preview);
   const motion = useAnimatedStyle(() => ({ transform: [{ translateY: activePreview ? withTiming(shift, { duration: 160, reduceMotion: ReduceMotion.System }) : 0 }] }));
+  const lifted = drag.active || preview?.preview?.source === id;
   const tone = entityTone(id, orderedGroups(shop));
   const group = shop.groups[id];
   const move = (direction: number) => {
@@ -471,20 +539,27 @@ function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string;
     if (to < 0 || to >= order.length) return;
     const next = [...order]; [next[index], next[to]] = [next[to], next[index]]; change(next);
   };
-  const content = <><View style={[s.itemCategory, { backgroundColor: tone.soft }]}><Icon name={group.icon ?? 'bag'} color={tone.color} /></View><Text style={[s.groupName, { color: tone.color }]}>{group.name}</Text></>;
-  return <Animated.View><DraxView lockDragXPosition snapDelay={0} snapDuration={180} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+  const mark = <><View style={[s.itemCategory, { backgroundColor: tone.soft }]}><Icon name={group.icon ?? 'bag'} color={tone.color} /></View><Text style={[s.groupName, { color: tone.color }]}>{group.name}</Text></>;
+  const lift = (event: DraxDragEventData) => {
+    drag.start(); preview?.start(id, event);
+    const dims = event.dragged.measurements ? { width: event.dragged.measurements.width, height: event.dragged.measurements.height } : undefined;
+    ghost.show(dragHoverRow(dims, [s.categoryOrderRow, s.dragging], <>
+      <View style={[s.itemCategory, { backgroundColor: tone.soft }]}><Icon name={group.icon ?? 'bag'} color={tone.color} /></View>
+      <Text style={[s.groupName, { color: tone.color }]}>{group.name}</Text>
+    </>));
+  };
+  return <Animated.View><DraxView lockDragXPosition noHover snapDelay={0} snapDuration={180} style={[s.dropTarget, lifted && s.itemDragOrigin]} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
     dragPayload={{ kind: 'group', id, shopId: shop.id } satisfies Drag} acceptsDrag={payload => accepts(payload, shop.id, 'group') && payload.id !== id}
-    onDragStart={event => { drag.start(); preview?.start(id, event); }}
+    onDragStart={lift}
     onDrag={event => preview?.home(event)}
-      onDragEnd={event => { drag.stop(); return preview?.release(event.cancelled); }}
-    onDragDrop={() => { drag.stop(); return preview?.release(); }} onSnapEnd={() => preview?.finish()}
-    onReceiveDragEnter={event => preview?.over(id, event)} onReceiveDragOver={event => preview?.over(id, event)}
-    draggingStyle={s.itemDragOrigin} hoverDraggingStyle={s.dragging}>
+    onDragEnd={event => preview?.release(event.cancelled)}
+    onDragDrop={() => preview?.release()} onSnapEnd={() => { drag.stop(); preview?.finish(); }}
+    onReceiveDragEnter={event => preview?.over(id, event)} onReceiveDragOver={event => preview?.over(id, event)}>
     <Animated.View style={motion}><Pressable style={s.categoryOrderRow} accessibilityRole="button" accessibilityLabel={`${group.name} category order`} accessibilityHint="Hold anywhere to drag. Alt+Up or Alt+Down also moves the category."
       accessibilityActions={[{ name: 'increment', label: 'Move later' }, { name: 'decrement', label: 'Move earlier' }]}
       onAccessibilityAction={event => move(event.nativeEvent.actionName === 'increment' ? 1 : -1)}
       onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp','ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}
-      onLongPress={() => {}} delayLongPress={DRAG_DELAY}>{content}</Pressable></Animated.View>
+      onLongPress={() => {}} delayLongPress={DRAG_DELAY}>{mark}</Pressable></Animated.View>
   </DraxView></Animated.View>;
 }
 
@@ -778,11 +853,11 @@ export default function App() {
     DMSans_600SemiBold: require('@expo-google-fonts/dm-sans/600SemiBold/DMSans_600SemiBold.ttf'),
     DMSans_700Bold: require('@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf'),
   });
-  return <GestureHandlerRootView style={s.root}><SafeAreaProvider><DraxProvider><StatusBar style="dark" />
+  return <GestureHandlerRootView style={s.root}><SafeAreaProvider><DraxProvider><DragGhostHost><StatusBar style="dark" />
     <SafeAreaView style={s.safe} edges={['top']}><SafeAreaView style={s.content} edges={['bottom']}>
       {fontsLoaded || fontError || Platform.OS === 'web' ? <EditingSurface><Main /></EditingSurface> : <View style={s.loading}><ActivityIndicator color={c.primary} /></View>}
     </SafeAreaView></SafeAreaView>
-  </DraxProvider></SafeAreaProvider></GestureHandlerRootView>;
+  </DragGhostHost></DraxProvider></SafeAreaProvider></GestureHandlerRootView>;
 }
 
 const s = StyleSheet.create({
@@ -797,6 +872,7 @@ const s = StyleSheet.create({
   categoryTile: { width: 44, alignItems: 'center', gap: 5, paddingBottom: 4 },
   categoryTileName: { fontFamily: f.medium, fontSize: 10, lineHeight: 13, minHeight: 13, textAlign: 'center', width: '100%' },
   root: { flex: 1, backgroundColor: c.background }, flex: { flex: 1 },
+  dragGhostLayer: { zIndex: 10000, elevation: 10000 },
   safe: { flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center', backgroundColor: c.header },
   content: { flex: 1, backgroundColor: c.white },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 20 },

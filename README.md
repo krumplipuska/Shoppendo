@@ -13,6 +13,8 @@ npm start
 
 Scan the QR code with the current Expo Go app on Android or iPhone. Press `w` for a browser preview, or run `npm run web`. Windows cannot run the iOS simulator; Expo Go on an iPhone or an EAS iOS build works instead.
 
+Installation applies `scripts/patch-drax.mjs` to Drax 1.1.0's native and web entries. Its gesture-handler v3 adapter must read `event.canceled`, and only the active row may cancel a drag. `tests/drax.test.mjs` checks the installed callbacks. Keep Drax pinned until these fixes are included upstream; restart Metro with `npx expo start --clear` after first applying the patch.
+
 ## What it does
 
 - Use the floating **Add store** button to open create/join controls in a compact slide-up panel. Store, category, and item panels share the same dimmed backdrop, swipe-down dismissal, and keyboard-aware positioning. Store badges show their initials and distinct accents; new stores start with six standard groups. Tap anywhere on a store row to open it.
