@@ -386,27 +386,20 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
     if (to < 0 || to >= order.length) return;
     [order[from], order[to]] = [order[to], order[from]]; actions.reorderShops(order);
   };
-  return <Animated.View entering={Platform.OS === 'web' ? undefined : fadeIn} exiting={fadeOut} collapsable={false}>
-    {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle snapDelay={0} snapDuration={200} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-      renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={[s.storeRow, s.liftedCard]}><View style={[s.storeBadge, { backgroundColor: c.primarySoft }]}><Text style={[s.storeInitials, { color: c.primary }]}>{storeInitials(shop.name)}</Text></View><View style={s.flex}><Text numberOfLines={1} style={s.storeName}>{shop.name}</Text>{details}</View><Icon name="share" color={c.primary} /><Icon name="right" color={c.primary} /></View></Animated.View>}
-      payload={{ kind: 'store', id: shop.id, shopId: '' } satisfies Drag}
-      acceptsDrag={payload => accepts(payload, '', 'store') && payload.id !== shop.id}
-      onDragStart={event => { drag.start(); setLift(true); token.current = preview?.start(shop.id, event) ?? 0; }}
-      onDragEnd={event => { drag.stop(); setLift(false); return preview?.release(token.current, event, event.cancelled); }}
-      onDragDrop={event => { drag.stop(); setLift(false); return preview?.release(token.current, event, false); }} onSnapEnd={() => trace(token.current, 'snap complete')}
-      onReceiveDragEnter={preview?.over} onReceiveDragOver={preview?.over} onReceiveDragExit={preview?.exit}
-      draggingStyle={s.itemDragOrigin} dragReleasedStyle={s.itemDragOrigin}>
-      <Animated.View style={motion}><SwipeToDelete label={shop.name} onDelete={() => actions.removeShop(shop.id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
-        <View style={s.storeRow}>
-          <DraxHandle style={StyleSheet.absoluteFill}><View style={s.storeDragArea} pointerEvents="box-none">
+  const renderCard = (action?: (normal?: React.ReactNode) => React.ReactNode) => {
+    const Handle = action ? DraxHandle : View;
+    const renderAction = action ?? ((normal?: React.ReactNode) => normal);
+    return (
+        <View style={[s.storeRow, !action && s.liftedCard]}>
+          <Handle style={StyleSheet.absoluteFill}><View style={s.storeDragArea} pointerEvents="box-none">
             <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel={`Open ${shop.name} row`}
               onPress={() => { if (!drag.held.current) open(shop.id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} />
-            <View pointerEvents="none" style={[s.storeBadge, { backgroundColor: c.primarySoft }]}><Text style={[s.storeInitials, { color: c.primary }]}>{storeInitials(shop.name)}</Text></View>
+            <View pointerEvents="none" style={[s.storeBadge, { marginTop: 13 }]}><Text style={[s.storeInitials, { color: c.primary }]}>{storeInitials(shop.name)}</Text></View>
             <View pointerEvents="none" style={s.flex} />
-            {action(<IconButton icon="right" color={c.primary} label={`Open ${shop.name}`} onPress={() => { if (!drag.held.current) open(shop.id); }} />)}
-          </View></DraxHandle>
+            {renderAction(<IconButton icon="right" color={c.primary} label={`Open ${shop.name}`} onPress={() => { if (!drag.held.current) open(shop.id); }} />)}
+          </View></Handle>
           <View pointerEvents="box-none" style={s.storeTextOverlay}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Open ${shop.name} store, ${count} items, ${pickingOrder}`} style={[s.nameTouch, { marginRight: 88 }]}
+            <Pressable accessibilityRole="button" accessibilityLabel={`Open ${shop.name} store, ${count} items, ${pickingOrder}`} style={[s.nameTouch, { marginRight: shop.shared ? 88 : 44 }]}
               onPress={() => { if (!drag.held.current) open(shop.id); }} onLongPress={() => { if (!drag.held.current) edit(); }} delayLongPress={DRAG_DELAY}
               accessibilityHint="Hold the name to rename. Hold elsewhere on the row to drag. Swipe left to remove."
               accessibilityActions={[{ name: 'edit', label: 'Rename store' }, { name: 'delete', label: 'Remove store' }, { name: 'increment', label: 'Move store later' }, { name: 'decrement', label: 'Move store earlier' }]}
@@ -416,8 +409,22 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
             </Pressable>
             <View pointerEvents="none">{details}</View>
           </View>
-          <IconButton icon="share" color={c.primary} solid={shop.shared} label={`Share ${shop.name}${shop.shared ? ', shared store' : ''}`} style={s.storeShareButton} onPress={() => { if (!drag.held.current) share(); }} />
-        </View>}
+          {shop.shared && <IconButton icon="share" color={c.primary} solid label={`Share ${shop.name}, shared store`} style={s.storeShareButton} onPress={() => { if (!drag.held.current) share(); }} />}
+        </View>
+    );
+  };
+  return <Animated.View entering={Platform.OS === 'web' ? undefined : fadeIn} exiting={fadeOut} collapsable={false}>
+    {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle snapDelay={0} snapDuration={200} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+      renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}>{renderCard()}</Animated.View>}
+      payload={{ kind: 'store', id: shop.id, shopId: '' } satisfies Drag}
+      acceptsDrag={payload => accepts(payload, '', 'store') && payload.id !== shop.id}
+      onDragStart={event => { drag.start(); setLift(true); token.current = preview?.start(shop.id, event) ?? 0; }}
+      onDragEnd={event => { drag.stop(); setLift(false); return preview?.release(token.current, event, event.cancelled); }}
+      onDragDrop={event => { drag.stop(); setLift(false); return preview?.release(token.current, event, false); }} onSnapEnd={() => trace(token.current, 'snap complete')}
+      onReceiveDragEnter={preview?.over} onReceiveDragOver={preview?.over} onReceiveDragExit={preview?.exit}
+      draggingStyle={s.itemDragOrigin} dragReleasedStyle={s.itemDragOrigin}>
+      <Animated.View style={motion}><SwipeToDelete label={shop.name} onDelete={() => actions.removeShop(shop.id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
+        renderCard(action)}
       </SwipeToDelete></Animated.View>
     </DraxView>}
   </Animated.View>;
@@ -910,9 +917,9 @@ const s = StyleSheet.create({
   currentStoreName: { fontFamily: f.bold, fontSize: 22, lineHeight: 28, includeFontPadding: false, color: c.text },
   nameTouch: { alignSelf: 'flex-start', maxWidth: '100%' },
   storeTextOverlay: { position: 'absolute', left: 76, right: 16, top: 0, bottom: 0, justifyContent: 'center' },
-  storeShareButton: { position: 'absolute', right: 52, top: 7 },
+  storeShareButton: { position: 'absolute', right: 52, top: 1 },
   groupTextOverlay: { position: 'absolute', left: 44, right: 104, top: 0, bottom: 0, justifyContent: 'center' },
-  storeDragArea: { flex: 1, paddingHorizontal: 16, paddingTop: 7, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  storeDragArea: { flex: 1, paddingLeft: 16, paddingRight: 8, paddingTop: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   storeOpen: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48 },
   fieldLabel: { fontFamily: f.semibold, fontSize: 14, color: c.text },
   addModes: { flexDirection: 'row', gap: 10 }, addMode: { flex: 1, minHeight: 50, borderWidth: 1, borderColor: c.border, borderRadius: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
