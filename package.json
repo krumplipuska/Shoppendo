@@ -36,6 +36,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/patch-drax.mjs",
+    "prestart": "node scripts/patch-drax.mjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",

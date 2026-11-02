@@ -13,6 +13,8 @@ npm start
 
 Scan the QR code with the current Expo Go app on Android or iPhone. Press `w` for a browser preview, or run `npm run web`. Windows cannot run the iOS simulator; Expo Go on an iPhone or an EAS iOS build works instead.
 
+`npm start` also reapplies the Drax compatibility patches. After updating an existing checkout, stop the running Expo server and run `npm start -- --clear` once to discard cached dependency code, then reopen the app in Expo Go.
+
 ## What it does
 
 - Use the floating **Add store** button to open create/join controls in a compact slide-up panel. Store, category, and item panels share the same dimmed backdrop, swipe-down dismissal, and keyboard-aware positioning. Store badges show their initials and distinct accents; new stores start with six standard groups. Tap anywhere on a store row to open it.

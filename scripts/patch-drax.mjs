@@ -11,7 +11,7 @@ if (require('react-native-drax/package.json').version !== '1.1.0') {
 }
 for (const path of ['src/compat/useDraxPanGesture.ts', 'lib/module/compat/useDraxPanGesture.js']) {
   const file = join(root, path);
-  const input = readFileSync(file, 'utf8');
+  const input = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
   const event = path.endsWith('.ts') ? 'event: DraxPanEvent & { canceled: boolean }' : 'event';
   const replacement = `onDeactivate: (${event}) => {
       'worklet';
@@ -19,7 +19,10 @@ for (const path of ['src/compat/useDraxPanGesture.ts', 'lib/module/compat/useDra
       else onDeactivate(event);
     },`;
   if (input.includes(replacement)) continue;
-  const callbacks = /onDeactivate: config\.onDeactivate,\s+onFinalize: config\.onFinalize,?/;
+  // Older checkouts may already contain the first, incomplete v3 adapter.
+  const previousAdapter = /onDeactivate: \(event(?:: DraxPanEvent & \{ canceled: boolean \})?\) => \{\s+'worklet';\s+if \(!event\.canceled\) config\.onDeactivate\(event\);\s+\},\s+onFinalize: \(event(?:: DraxPanEvent & \{ canceled: boolean \})?\) => \{\s+'worklet';\s+config\.onFinalize\(event, !event\.canceled\);\s+\},?/;
+  const originalCallbacks = /onDeactivate: config\.onDeactivate,\s+onFinalize: config\.onFinalize,?/;
+  const callbacks = previousAdapter.test(input) ? previousAdapter : originalCallbacks;
   const declaration = '  const panConfig';
   if (!callbacks.test(input) || !input.includes(declaration)) throw new Error('Unexpected Drax adapter in ' + path);
   writeFileSync(file, input.replace(declaration, '  const { onDeactivate, onFinalize } = config;\n' + declaration)

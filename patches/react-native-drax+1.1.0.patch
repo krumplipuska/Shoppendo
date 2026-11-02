@@ -1,0 +1,42 @@
+diff --git a/node_modules/react-native-drax/src/HoverLayer.tsx b/node_modules/react-native-drax/src/HoverLayer.tsx
+--- a/node_modules/react-native-drax/src/HoverLayer.tsx
++++ b/node_modules/react-native-drax/src/HoverLayer.tsx
+@@ -141,6 +141,7 @@
+       <Reanimated.View
+         style={[styles.container, positionStyle]}
+         pointerEvents="none"
++        collapsable={false}
+       >
+         <Reanimated.View style={[styles.content, dimensionStyle, visualStyle]}>
+           {hoverContentRef.current}
+@@ -153,6 +154,9 @@
+ const styles = StyleSheet.create({
+   container: {
+     ...StyleSheet.absoluteFillObject,
++    // Stack the native overlay itself above the provider's app content.
++    zIndex: 10000,
++    elevation: 10000,
+     // Default hidden — useAnimatedStyle overrides to opacity:1 when dragging.
+     // Prevents a one-frame flash on first mount before the animated style evaluates.
+     opacity: 0,
+diff --git a/node_modules/react-native-drax/lib/module/HoverLayer.js b/node_modules/react-native-drax/lib/module/HoverLayer.js
+--- a/node_modules/react-native-drax/lib/module/HoverLayer.js
++++ b/node_modules/react-native-drax/lib/module/HoverLayer.js
+@@ -128,6 +128,7 @@
+   return /*#__PURE__*/_jsx(Reanimated.View, {
+     style: [styles.container, positionStyle],
+     pointerEvents: "none",
++    collapsable: false,
+     children: /*#__PURE__*/_jsx(Reanimated.View, {
+       style: [styles.content, dimensionStyle, visualStyle],
+       children: hoverContentRef.current
+@@ -137,6 +138,9 @@
+ const styles = StyleSheet.create({
+   container: {
+     ...StyleSheet.absoluteFillObject,
++    // Stack the native overlay itself above the provider's app content.
++    zIndex: 10000,
++    elevation: 10000,
+     // Default hidden — useAnimatedStyle overrides to opacity:1 when dragging.
+     // Prevents a one-frame flash on first mount before the animated style evaluates.
+     opacity: 0,

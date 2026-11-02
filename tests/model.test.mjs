@@ -421,6 +421,29 @@ test('only the current session can finish, independently of animation completion
   assert.deepEqual(order, ['accepted']);
 });
 
+test('installed Drax hover stays outside normal layout without absoluteFillObject', async () => {
+  const { createRequire } = await import('node:module');
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { runInNewContext } = await import('node:vm');
+  const require = createRequire(import.meta.url);
+  const ts = require('typescript');
+  const root = dirname(require.resolve('react-native-drax/package.json'));
+  for (const path of ['src/HoverLayer.tsx', 'lib/module/HoverLayer.js']) {
+    let styles;
+    const code = ts.transpile(readFileSync(join(root, path), 'utf8'), {
+      module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
+    });
+    runInNewContext(code, { exports: {}, require: name => {
+      if (name === 'react-native') return { StyleSheet: { create: value => (styles = value) } };
+      if (name === 'react') return { memo: component => component };
+      return {};
+    } });
+    assert.equal(styles.container.position, 'absolute', path);
+    for (const edge of ['top', 'left', 'right', 'bottom']) assert.equal(styles.container[edge], 0, `${path}: ${edge}`);
+  }
+});
+
 test('installed Drax native and built adapters deliver one terminal event per active RNGH v3 pan', async () => {
   const { createRequire } = await import('node:module');
   const { readFileSync } = await import('node:fs');
