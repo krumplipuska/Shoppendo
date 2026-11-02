@@ -388,7 +388,7 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
   };
   return <Animated.View entering={Platform.OS === 'web' ? undefined : fadeIn} exiting={fadeOut} collapsable={false}>
     {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle snapDelay={0} snapDuration={200} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-      renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={s.storeRow}><View style={[s.storeBadge, { backgroundColor: c.primarySoft }]}><Text style={[s.storeInitials, { color: c.primary }]}>{storeInitials(shop.name)}</Text></View><View style={s.flex}><Text numberOfLines={1} style={s.storeName}>{shop.name}</Text>{details}</View><Icon name="share" color={c.primary} /><Icon name="right" color={c.primary} /></View></Animated.View>}
+      renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={[s.storeRow, s.liftedCard]}><View style={[s.storeBadge, { backgroundColor: c.primarySoft }]}><Text style={[s.storeInitials, { color: c.primary }]}>{storeInitials(shop.name)}</Text></View><View style={s.flex}><Text numberOfLines={1} style={s.storeName}>{shop.name}</Text>{details}</View><Icon name="share" color={c.primary} /><Icon name="right" color={c.primary} /></View></Animated.View>}
       payload={{ kind: 'store', id: shop.id, shopId: '' } satisfies Drag}
       acceptsDrag={payload => accepts(payload, '', 'store') && payload.id !== shop.id}
       onDragStart={event => { drag.start(); setLift(true); token.current = preview?.start(shop.id, event) ?? 0; }}
@@ -441,8 +441,8 @@ function ShopList({ open }: { open: (id: string) => void }) {
     <View style={s.homeHeader}><View style={s.titleRow}><View style={s.flex}><Text accessibilityRole="header" style={s.title}>Stores</Text><Text style={s.homeSubtitle}>A picking order for every store.</Text></View></View></View>
     <DraxView style={s.flex} draggable={false} receptive={false} onMeasure={dragList.measureViewport}><DraxScrollView ref={instance => { scroll.current = instance as unknown as React.ComponentRef<typeof ScrollView>; }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} contentContainerStyle={s.storesContent} style={s.flex}>
       {editing && data.shops.some(shop => shop.id === editing) && <NameEditor name={data.shops.find(shop => shop.id === editing)!.name} label="Edit store name" save={name => actions.renameShop(editing, name)} close={() => setEditing(null)} />}
-      <View style={s.storeRows}><View>{data.shops.map(shop => <StoreRow key={shop.id} shop={shop} shops={data.shops} open={open} share={() => setSharing(shop.id)}
-        editing={false} edit={() => setEditing(shop.id)} close={() => setEditing(null)} />)}</View></View>
+      <View style={s.storeRows}>{data.shops.map(shop => <StoreRow key={shop.id} shop={shop} shops={data.shops} open={open} share={() => setSharing(shop.id)}
+        editing={false} edit={() => setEditing(shop.id)} close={() => setEditing(null)} />)}</View>
       <ListTail shopId="" kind="store" last={order.at(-1)} />
       {!data.shops.length && <View style={s.emptyStores}><Icon name="bag" size={32} /><Text style={s.emptyTitle}>Your first store</Text><Text style={s.caption}>Tap + to create a store or join by ID.</Text></View>}
     </DraxScrollView></DraxView>
@@ -496,17 +496,15 @@ function CategoryButtons({ shop, selected, select, add }: { shop: Shop; selected
   return <View style={s.categoryTiles}>{groups.map(id => {
     const tone = entityTone(id, groups);
     return <Pressable key={id} accessibilityRole="radio" accessibilityLabel={`Category ${shop.groups[id].name}`}
-      accessibilityState={{ checked: selected === id, selected: selected === id }} onPress={() => select(id)} style={s.categoryTile}>
-      <View style={[s.categoryButton, { borderColor: selected === id ? tone.color : 'transparent', borderWidth: selected === id ? 2 : 1, backgroundColor: tone.soft }]}>
-        <Icon name={shop.groups[id].icon ?? 'bag'} color={tone.color} size={24} />
-        {selected === id && <View style={s.selectionBadge}><Icon name="check" color={c.white} size={13} /></View>}
-      </View>
-      <Text numberOfLines={1} ellipsizeMode="tail" style={[s.categoryTileName, { color: c.text, fontFamily: selected === id ? f.bold : f.medium }]}>{shop.groups[id].name}</Text>
+      accessibilityState={{ checked: selected === id, selected: selected === id }} onPress={() => select(id)}
+      style={[s.categoryTile, { backgroundColor: selected === id ? c.primarySoft : tone.soft, borderColor: selected === id ? c.primary : 'transparent' }]}>
+      <Icon name={shop.groups[id].icon ?? 'bag'} color={tone.color} size={21} />
+      <Text numberOfLines={1} style={[s.categoryTileName, { color: selected === id ? c.text : tone.color }]}>{shop.groups[id].name}</Text>
+      {selected === id && <View style={[s.selectionBadge, { backgroundColor: c.primary }]}><Icon name="check" color={c.white} size={12} /></View>}
     </Pressable>;
   })}
     <Pressable accessibilityRole="button" accessibilityLabel="Add category" onPress={add} style={s.categoryTile}>
-      <View style={[s.categoryButton, { backgroundColor: c.primary, borderColor: c.primary }]}><Icon name="plus" color={c.white} size={24} /></View>
-      <Text numberOfLines={1} ellipsizeMode="tail" style={[s.categoryTileName, { color: c.text }]}>Add category</Text>
+      <Icon name="plus" size={21} /><Text style={s.categoryTileName}>Add category</Text>
     </Pressable>
   </View>;
 }
@@ -562,7 +560,7 @@ function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string;
     <View accessible={false} style={s.orderGrip}>{[0, 1, 2, 3, 4, 5].map(dot => <View key={dot} style={s.gripDot} />)}</View>
   </>;
   return <Animated.View><DraxView snapDelay={0} snapDuration={200} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-    renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={[s.categoryOrderRow, s.liftedOrderRow]}>{content}</View></Animated.View>}
+    renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={[s.categoryOrderRow, s.liftedCard]}>{content}</View></Animated.View>}
       payload={{ kind: 'group', id, shopId: shop.id } satisfies Drag} acceptsDrag={payload => accepts(payload, shop.id, 'group') && payload.id !== id}
     onDragStart={event => { drag.start(); setLift(true); token.current = preview?.start(id, event) ?? 0; }}
       onDragEnd={event => { drag.stop(); setLift(false); return preview?.release(token.current, event, event.cancelled); }}
@@ -643,7 +641,7 @@ function AddItem({ shop, close, initialCategory, editingId, onAdded }: { shop: S
         <Icon name={shop.groups[option.groupId].icon ?? 'bag'} color={entityTone(option.groupId, groups).color} size={19} />
         <Text style={[s.link, s.flex]}>{option.name}</Text><Text style={s.caption}>{shop.groups[option.groupId].name}</Text>
       </Pressable>)}</ScrollView>}
-      <Text style={s.selectedCategoryLabel}>Category: {shop.groups[category]?.name ?? 'Choose a category'}</Text>
+      <Text style={s.selectedCategoryLabel}>Category</Text>
       <CategoryButtons shop={shop} selected={category} add={() => { scrollY.current = 0; setAddingCategory(true); }} select={id => { manualCategory.current = true; setCategory(id); setError(''); }} />
       <Pressable accessibilityRole="button" accessibilityLabel={editing ? "Cancel editing item" : "Cancel adding item"} style={s.textButton} onPress={() => { Keyboard.dismiss(); close(); }}><Text style={s.link}>Cancel</Text></Pressable>
       {Boolean(error) && <Text accessibilityRole="alert" style={ui.errorText}>{error}</Text>}
@@ -892,7 +890,7 @@ const s = StyleSheet.create({
   itemArrival: { position: 'absolute', left: 12, right: 12, top: 0, zIndex: 1000, elevation: 40, backgroundColor: c.white, borderRadius: 12, borderWidth: 1, borderColor: c.border, minHeight: 54, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: c.text, shadowOpacity: 0.15, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   orderStoreLabel: { fontFamily: f.medium, color: c.muted, textTransform: 'uppercase', fontSize: 12, marginVertical: 10 },
   categoryOrderRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
-  liftedOrderRow: { flex: 1, borderColor: '#85A67D' },
+  liftedCard: { flex: 1, borderColor: '#85A67D' },
   orderNumber: { minWidth: 30, height: 30, borderRadius: 8, backgroundColor: c.background, justifyContent: 'center', alignItems: 'center' },
   orderIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   orderGrip: { width: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginRight: 6 },
@@ -901,9 +899,9 @@ const s = StyleSheet.create({
   editorHeading: { fontFamily: f.semibold, fontSize: 17, color: c.text, marginBottom: 6 },
   selectionBadge: { position: 'absolute', right: -5, top: -5, width: 21, height: 21, borderRadius: 11, borderWidth: 2, borderColor: c.white, backgroundColor: c.text, alignItems: 'center', justifyContent: 'center' },
   shopPage: { backgroundColor: c.background },
-  categoryTiles: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 4, rowGap: 8, paddingTop: 8 },
-  categoryTile: { width: 44, alignItems: 'center', gap: 5, paddingBottom: 4 },
-  categoryTileName: { fontFamily: f.medium, fontSize: 10, lineHeight: 13, minHeight: 13, textAlign: 'center', width: '100%' },
+  categoryTiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingTop: 8, paddingHorizontal: 5 },
+  categoryTile: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', minHeight: 42, paddingHorizontal: 12, gap: 7, borderRadius: 12, borderWidth: 1, borderColor: 'transparent', backgroundColor: c.background },
+  categoryTileName: { flexShrink: 1, fontFamily: f.medium, fontSize: 14, color: c.text },
   root: { flex: 1, backgroundColor: c.background }, flex: { flex: 1 },
   safe: { flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center', backgroundColor: c.background },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 20 },
@@ -928,7 +926,7 @@ const s = StyleSheet.create({
   homeHeader: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 0 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   title: { fontFamily: f.bold, fontSize: 32, lineHeight: 40, color: c.text, flexShrink: 1 },
-  storeRows: { gap: 12 }, storeRow: { minHeight: 92, padding: 16, marginBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  storeRows: { gap: 12 }, storeRow: { minHeight: 92, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
   storeNameWrap: { flex: 1, gap: 4 }, storeName: { fontFamily: f.bold, color: c.text, fontSize: 18 },
   storeBadge: { width: 44, height: 44, borderRadius: 12, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' },
   storeInitials: { fontFamily: f.bold, fontSize: 20, color: c.primary },
