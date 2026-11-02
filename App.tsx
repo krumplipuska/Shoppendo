@@ -409,7 +409,7 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
             </Pressable>
             <View pointerEvents="none">{details}</View>
           </View>
-          {shop.shared && <IconButton icon="share" color={c.primary} solid label={`Share ${shop.name}, shared store`} style={s.storeShareButton} onPress={() => { if (!drag.held.current) share(); }} />}
+          {shop.shared && <IconButton icon="share" color={c.primary} label={`Share ${shop.name}, shared store`} style={s.storeShareButton} onPress={() => { if (!drag.held.current) share(); }} />}
         </View>
     );
   };
@@ -772,7 +772,7 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
         </Pressable>
         <View style={s.flex} />
         {!sortingGroups && <View style={s.headerActions}>
-          <IconButton icon="share" solid={shop.shared} label="Share shop" onPress={() => { setMenuOpen(false); setSharing(true); }} />
+          <IconButton icon="share" label="Share shop" onPress={() => { setMenuOpen(false); setSharing(true); }} />
           <IconButton icon="more" label="Store settings" onPress={() => setMenuOpen(!menuOpen)} />
         </View>}
       </View></GestureDetector>
@@ -916,10 +916,10 @@ const s = StyleSheet.create({
   storeTitleTouch: { flexShrink: 1, justifyContent: 'center' },
   currentStoreName: { fontFamily: f.bold, fontSize: 22, lineHeight: 28, includeFontPadding: false, color: c.text },
   nameTouch: { alignSelf: 'flex-start', maxWidth: '100%' },
-  storeTextOverlay: { position: 'absolute', left: 76, right: 16, top: 0, bottom: 0, justifyContent: 'center' },
-  storeShareButton: { position: 'absolute', right: 52, top: 1 },
+  storeTextOverlay: { position: 'absolute', left: 84, right: 16, top: 0, bottom: 0, justifyContent: 'center' },
+  storeShareButton: { position: 'absolute', right: 52, top: 7 },
   groupTextOverlay: { position: 'absolute', left: 44, right: 104, top: 0, bottom: 0, justifyContent: 'center' },
-  storeDragArea: { flex: 1, paddingLeft: 16, paddingRight: 8, paddingTop: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  storeDragArea: { flex: 1, paddingLeft: 16, paddingRight: 8, paddingTop: 7, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   storeOpen: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48 },
   fieldLabel: { fontFamily: f.semibold, fontSize: 14, color: c.text },
   addModes: { flexDirection: 'row', gap: 10 }, addMode: { flex: 1, minHeight: 50, borderWidth: 1, borderColor: c.border, borderRadius: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
@@ -933,10 +933,10 @@ const s = StyleSheet.create({
   homeHeader: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 0 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   title: { fontFamily: f.bold, fontSize: 32, lineHeight: 40, color: c.text, flexShrink: 1 },
-  storeRows: { gap: 12 }, storeRow: { minHeight: 92, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  storeRows: { gap: 12 }, storeRow: { minHeight: 104, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
   storeNameWrap: { flex: 1, gap: 4 }, storeName: { fontFamily: f.bold, color: c.text, fontSize: 18 },
-  storeBadge: { width: 44, height: 44, borderRadius: 12, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' },
-  storeInitials: { fontFamily: f.bold, fontSize: 20, color: c.primary },
+  storeBadge: { width: 52, height: 52, borderRadius: 14, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' },
+  storeInitials: { fontFamily: f.bold, fontSize: 24, color: c.primary },
   emptyStores: { alignItems: 'center', paddingVertical: 32, gap: 10 }, emptyTitle: { fontFamily: f.semibold, fontSize: 18, color: c.text },
   caption: { fontFamily: f.regular, fontSize: 13, color: c.muted, lineHeight: 20 },
   textButton: { minHeight: 44, justifyContent: 'center', alignItems: 'center' },
