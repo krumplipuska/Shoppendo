@@ -749,19 +749,27 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
   return <Animated.View style={s.flex} entering={SlideInDown.duration(240).easing(Easing.bezier(0.22, 1, 0.36, 1)).reduceMotion(ReduceMotion.System)}><GestureDetector gesture={page.edge} touchAction="pan-y"><Animated.View style={[s.flex, s.shopPage, page.style]}>
     <View style={s.listHeader} onLayout={event => setHeaderHeight(event.nativeEvent.layout.height)}>
       <GestureDetector gesture={page.header} touchAction="none"><View style={s.navigation}>
-        <IconButton icon="back" label={sortingGroups ? "Back to shop" : "Back to stores"} onPress={closePage} />
-        {editingStore ? <View style={s.flex}><NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={() => setEditingStore(false)} /></View> : <View style={s.currentStore}>
-          <Pressable style={s.storeTitleTouch} accessibilityRole="button" accessibilityLabel={`${shop.name} store name`} accessibilityHint="Hold the name to rename"
-            onLongPress={() => setEditingStore(true)} delayLongPress={DRAG_DELAY}>
-            <Text accessibilityRole="header" numberOfLines={1} style={s.currentStoreName}>{shop.name}</Text>
-          </Pressable>
-        </View>}
-        {!editingStore && !sortingGroups && <View style={s.headerActions}>
-          <IconButton icon="groupSort" label="Sort groups" disabled={groups.length < 2} onPress={startSorting} />
+        <Pressable accessibilityRole="button" accessibilityLabel={sortingGroups ? 'Back to shop' : 'Back to stores'} onPress={closePage} style={s.backLink}>
+          <Icon name="back" /><Text style={s.link}>{sortingGroups ? shop.name : 'Stores'}</Text>
+        </Pressable>
+        <View style={s.flex} />
+        {!sortingGroups && <View style={s.headerActions}>
           <IconButton icon="share" solid={shop.shared} label="Share shop" onPress={() => { setMenuOpen(false); setSharing(true); }} />
-          <IconButton icon="more" label="Shop menu" onPress={() => setMenuOpen(!menuOpen)} />
+          <IconButton icon="more" label="Store settings" onPress={() => setMenuOpen(!menuOpen)} />
         </View>}
       </View></GestureDetector>
+      {!sortingGroups && <>
+        {editingStore ? <View ><NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={() => setEditingStore(false)} /></View> : <View style={s.storeHeading}>
+          <Pressable style={s.storeTitleTouch} accessibilityRole="button" accessibilityLabel={`${shop.name} store name`} accessibilityHint="Hold the name to rename"
+            onLongPress={() => setEditingStore(true)} delayLongPress={DRAG_DELAY}>
+            <Text accessibilityRole="header" numberOfLines={1} style={s.title}>{shop.name}</Text>
+          </Pressable>
+        </View>}
+        <Pressable accessibilityRole="button" accessibilityLabel="Edit store picking order" style={s.orderBar} onPress={startSorting}>
+          <Icon name="groupSort" /><Text style={[s.orderLabel, s.flex]}>Store order</Text><Text style={s.link}>Edit</Text>
+        </Pressable>
+        <Text style={s.caption}>{flatItems.length} {flatItems.length === 1 ? 'item' : 'items'}</Text>
+      </>}
       {menuOpen && <View style={s.menuPosition}><EditingRegion onDismiss={() => setMenuOpen(false)}>
         <Animated.View entering={fadeIn} style={s.viewMenu}>
           <Text style={[s.menuCaption, s.menuShare]}>Sort items</Text>
@@ -785,7 +793,7 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
     </View>
     {sortingGroups ? <CategoryOrder shop={shop} draft={categoryDraft} change={setCategoryDraft} close={finishSorting} /> : <ItemEditorContext.Provider value={id => { setEditingItem(id); setTopAdding(false); }}><ItemDragContext.Provider value={itemDrag}><GestureDetector gesture={page.body} touchAction="pan-y"><View style={s.flex}><ShopScroll page={page}>
       <View>
-        <View>{flatItems.map(([id]) => <ItemRow key={id} shop={shop} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={() => toggle(id)} />)}</View>
+        <View style={flatItems.length ? s.itemPanel : undefined}>{flatItems.map(([id]) => <ItemRow key={id} shop={shop} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={() => toggle(id)} />)}</View>
         {!flatItems.length && groups.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="Add an item to the list" style={s.emptyList} onPress={() => setTopAdding(true)}>
           <Icon name="bag" size={28} /><Text style={s.caption}>{picked.length ? 'Nothing left to pick up' : 'Add your first item'}</Text>
         </Pressable>}
@@ -873,7 +881,7 @@ const s = StyleSheet.create({
   selectedCategoryLabel: { fontFamily: f.semibold, fontSize: 12, color: c.text, paddingTop: 8 },
   editorHeading: { fontFamily: f.semibold, fontSize: 17, color: c.text, marginBottom: 6 },
   selectionBadge: { position: 'absolute', right: -5, top: -5, width: 21, height: 21, borderRadius: 11, borderWidth: 2, borderColor: c.white, backgroundColor: c.text, alignItems: 'center', justifyContent: 'center' },
-  shopPage: { backgroundColor: c.white },
+  shopPage: { backgroundColor: c.background },
   categoryTiles: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 4, rowGap: 8, paddingTop: 8 },
   categoryTile: { width: 44, alignItems: 'center', gap: 5, paddingBottom: 4 },
   categoryTileName: { fontFamily: f.medium, fontSize: 10, lineHeight: 13, minHeight: 13, textAlign: 'center', width: '100%' },
@@ -910,7 +918,12 @@ const s = StyleSheet.create({
   textButton: { minHeight: 44, justifyContent: 'center', alignItems: 'center' },
   dangerText: { color: c.danger, fontFamily: f.medium, fontSize: 15 }, link: { color: c.primary, fontFamily: f.medium, fontSize: 14 },
   editStoreInput: { flex: undefined, borderWidth: 1, borderColor: c.border, borderRadius: 10 },
-  listHeader: { paddingHorizontal: 12, paddingTop: 14, paddingBottom: 8, zIndex: 10, backgroundColor: c.header, borderBottomWidth: 1, borderBottomColor: c.border },
+  listHeader: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 8, gap: 6, zIndex: 10, backgroundColor: c.background },
+  backLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  storeHeading: { alignItems: 'flex-start', paddingBottom: 4 },
+  orderBar: { minHeight: 46, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: c.primarySoft, borderRadius: 12 },
+  orderLabel: { fontFamily: f.medium, fontSize: 15, color: c.text },
+  itemPanel: { backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
   itemComposer: { paddingBottom: 4, flexShrink: 1 },
   composerInput: { borderWidth: 1.5, borderColor: c.primary, borderRadius: 14, paddingHorizontal: 6, overflow: 'hidden', marginBottom: 6 },
   menuPosition: { position: 'absolute', top: 62, right: 12, zIndex: 20 },
