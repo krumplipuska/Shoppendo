@@ -526,13 +526,15 @@ function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: stri
   const order = mergeCategoryOrder(orderedGroups(shop), draft);
   const dragList = useListDrag(order, chosen => { const next = dragOrder(order, chosen); if (next !== order) change(next); });
   return <ItemDragContext.Provider value={dragList}><View style={s.categoryOrderPage}>
-    <Text style={s.editorHeading}>Category order</Text>
-    <Text style={s.caption}>Hold anywhere on a row and drag. Changes apply when you close this panel.</Text>
+    <Text accessibilityRole="header" style={s.title}>Picking order</Text>
+    <Text style={s.homeSubtitle}>Drag categories to match your route.</Text>
     <DraxView style={s.flex} draggable={false} receptive={false} onMeasure={dragList.measureViewport}><DraxScrollView style={s.flex} contentContainerStyle={{ paddingTop: 12, paddingBottom: 20, flexGrow: 1 }} bounces={false}>
-      <View>{order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} />)}</View>
+      <Text style={s.orderStoreLabel}>For {shop.name}</Text>
+      <View style={{ gap: 8 }}>{order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} />)}</View>
       <ListTail shopId={shop.id} kind="group" last={order.at(-1)} />
     </DraxScrollView></DraxView>
-    <Button label="Done sorting categories" onPress={close} />
+    <Text style={s.caption}>Each store keeps its own order.</Text>
+    <Button label="Done" onPress={close} />
   </View></ItemDragContext.Provider>;
 }
 
@@ -548,9 +550,14 @@ function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string;
     if (to < 0 || to >= order.length) return;
     const next = [...order]; [next[index], next[to]] = [next[to], next[index]]; change(next);
   };
-  const content = <><View style={[s.itemCategory, { backgroundColor: tone.soft }]}><Icon name={group.icon ?? 'bag'} color={tone.color} /></View><Text style={[s.groupName, { color: tone.color }]}>{group.name}</Text></>;
+  const content = <>
+    <View style={s.orderNumber}><Text style={s.caption}>{String(order.indexOf(id) + 1).padStart(2, '0')}</Text></View>
+    <View style={[s.orderIcon, { backgroundColor: tone.soft }]}><Icon name={group.icon ?? 'bag'} color={tone.color} /></View>
+    <Text style={[s.groupName, s.flex]}>{group.name}</Text>
+    <View accessible={false} style={s.orderGrip}>{[0, 1, 2, 3, 4, 5].map(dot => <View key={dot} style={s.gripDot} />)}</View>
+  </>;
   return <Animated.View><DraxView snapDelay={0} snapDuration={200} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-    renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={s.categoryOrderRow}>{content}</View></Animated.View>}
+    renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={[s.categoryOrderRow, s.liftedOrderRow]}>{content}</View></Animated.View>}
       payload={{ kind: 'group', id, shopId: shop.id } satisfies Drag} acceptsDrag={payload => accepts(payload, shop.id, 'group') && payload.id !== id}
     onDragStart={event => { drag.start(); setLift(true); token.current = preview?.start(id, event) ?? 0; }}
       onDragEnd={event => { drag.stop(); setLift(false); return preview?.release(token.current, event, event.cancelled); }}
@@ -869,16 +876,22 @@ export default function App() {
     DMSans_700Bold: require('@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf'),
   });
   return <GestureHandlerRootView style={s.root}><SafeAreaProvider><DraxProvider><StatusBar style="dark" />
-    <SafeAreaView style={s.safe} edges={['top']}><SafeAreaView style={s.content} edges={['bottom']}>
+    <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
       {fontsLoaded || fontError || Platform.OS === 'web' ? <EditingSurface><Main /></EditingSurface> : <View style={s.loading}><ActivityIndicator color={c.primary} /></View>}
-    </SafeAreaView></SafeAreaView>
+    </SafeAreaView>
   </DraxProvider></SafeAreaProvider></GestureHandlerRootView>;
 }
 
 const s = StyleSheet.create({
-  categoryOrderPage: { flex: 1, backgroundColor: c.white, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12, gap: 8 },
+  categoryOrderPage: { flex: 1, backgroundColor: c.background, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, gap: 8 },
   itemArrival: { position: 'absolute', left: 12, right: 12, top: 0, zIndex: 1000, elevation: 40, backgroundColor: c.white, borderRadius: 12, borderWidth: 1, borderColor: c.border, minHeight: 54, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: c.text, shadowOpacity: 0.15, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-  categoryOrderRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
+  orderStoreLabel: { fontFamily: f.medium, color: c.muted, textTransform: 'uppercase', fontSize: 12, marginVertical: 10 },
+  categoryOrderRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  liftedOrderRow: { flex: 1, borderColor: '#85A67D' },
+  orderNumber: { minWidth: 30, height: 30, borderRadius: 8, backgroundColor: c.background, justifyContent: 'center', alignItems: 'center' },
+  orderIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  orderGrip: { width: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginRight: 6 },
+  gripDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: c.muted },
   selectedCategoryLabel: { fontFamily: f.semibold, fontSize: 12, color: c.text, paddingTop: 8 },
   editorHeading: { fontFamily: f.semibold, fontSize: 17, color: c.text, marginBottom: 6 },
   selectionBadge: { position: 'absolute', right: -5, top: -5, width: 21, height: 21, borderRadius: 11, borderWidth: 2, borderColor: c.white, backgroundColor: c.text, alignItems: 'center', justifyContent: 'center' },
@@ -887,8 +900,7 @@ const s = StyleSheet.create({
   categoryTile: { width: 44, alignItems: 'center', gap: 5, paddingBottom: 4 },
   categoryTileName: { fontFamily: f.medium, fontSize: 10, lineHeight: 13, minHeight: 13, textAlign: 'center', width: '100%' },
   root: { flex: 1, backgroundColor: c.background }, flex: { flex: 1 },
-  safe: { flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center', backgroundColor: c.header },
-  content: { flex: 1, backgroundColor: c.white },
+  safe: { flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center', backgroundColor: c.background },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 20 },
   currentStore: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48 },
   storeTitleTouch: { flexShrink: 1, justifyContent: 'center' },
@@ -906,7 +918,7 @@ const s = StyleSheet.create({
   undoLabel: { flex: 1, fontFamily: f.medium, fontSize: 13, color: c.white }, undoButton: { minHeight: 50, minWidth: 62, alignItems: 'center', justifyContent: 'center' }, undoText: { fontFamily: f.bold, fontSize: 14, color: '#B9E0C5' },
   storesContent: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 24, paddingBottom: 112 },
   homeSubtitle: { fontFamily: f.regular, fontSize: 16, color: c.muted },
-  storesPage: { flex: 1, backgroundColor: '#EFF4ED' },
+  storesPage: { flex: 1, backgroundColor: c.background },
   homeHeader: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 0 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   title: { fontFamily: f.bold, fontSize: 32, lineHeight: 40, color: c.text, flexShrink: 1 },
