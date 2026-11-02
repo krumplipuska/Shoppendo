@@ -6,9 +6,9 @@ import { type GroupIcon } from './model';
 import { backSwipeDirection, deleteSwipeProgress, keyboardOverlap } from './interaction';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-worklets';
-import Animated, { ReduceMotion, useReducedMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
+import Animated, { Easing as MotionEasing, FadeIn, FadeOut, ReduceMotion, useReducedMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
 
-export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'copy' | 'close' | 'trash' | 'more' | 'groupSort' | 'categories' | 'grip' | GroupIcon;
+export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'copy' | 'close' | 'trash' | 'undo' | 'more' | 'groupSort' | 'categories' | 'grip' | GroupIcon;
 export type InputHandle = React.ComponentRef<typeof TextInput>;
 type Dismiss = () => void | boolean;
 const EditingContext = createContext<Map<symbol, Dismiss> | null>(null);
@@ -57,6 +57,7 @@ const paths: Record<Exclude<IconName, 'more'>, string> = {
   categories: 'M2 21h11a3 3 0 0 0 0-6H6a3 3 0 0 1 0-6h4m-2-2 2 2-2 2M12 3h2l2 8h5l2-6h-8M17 14h.01M21 14h.01',
   grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
   plus: 'M12 5v14M5 12h14', check: 'm5 12 4 4L19 6', back: 'm14 5-7 7 7 7', down: 'm7 10 5 5 5-5', right: 'm9 6 6 6-6 6',
+  undo: 'M3 7v6h6M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.7 2.9L3 13',
   share: 'M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8', close: 'm6 6 12 12M6 18 18 6', bag: 'M5 7h14l1 14H4L5 7ZM8 8V6a4 4 0 0 1 8 0v2',
   fruit: 'M12 8c-6-5-11 1-8 8 2 5 5 6 8 4 3 2 6 1 8-4 3-7-2-13-8-8Zm0 0V4m0 1c1-3 4-3 6-2-1 3-3 4-6 2Z',
   bread: 'M6 7c-5 0-5 7-2 8v6h16v-6c3-1 3-8-2-8-1-5-11-5-12 0Zm3 5 1 4m4-4 1 4',
@@ -267,6 +268,33 @@ export function FloatingAddButton({ label, accessibilityLabel = label, onPress, 
   </Pressable>;
 }
 
+export function FloatingUndoButton({ label, onPress, duration }: {
+  label: string; onPress: () => void; duration: number;
+}) {
+  const reducedMotion = useReducedMotion();
+  const progress = useSharedValue(1);
+  useEffect(() => {
+    progress.value = 1;
+    if (reducedMotion) return;
+    progress.value = withTiming(0, { duration, easing: MotionEasing.linear, reduceMotion: ReduceMotion.System });
+    return () => cancelAnimation(progress);
+  }, [duration, reducedMotion, progress]);
+  const fillStyle = useAnimatedStyle(() => ({
+    width: `${progress.value * 100}%`,
+  }));
+  return <Animated.View entering={FadeIn.duration(150).reduceMotion(ReduceMotion.System)} exiting={FadeOut.duration(120).reduceMotion(ReduceMotion.System)}
+    pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`Undo ${label}`} accessibilityLiveRegion="polite" onPress={onPress}
+      style={({ pressed }) => [ui.floatingUndo, pressed && { opacity: 0.8 }]}>
+      <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: c.text }]} />
+      <Animated.View pointerEvents="none" style={[ui.floatingUndoFill, fillStyle]} />
+      <View pointerEvents="none" style={ui.floatingUndoContent}>
+        <Icon name="undo" color={c.white} size={18} /><Text style={[ui.buttonText, ui.floatingUndoLabel]}>Undo</Text>
+      </View>
+    </Pressable>
+  </Animated.View>;
+}
+
 export const ui = StyleSheet.create({
   actionSlot: { width: 44, height: 44 },
   iconButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
@@ -279,6 +307,10 @@ export const ui = StyleSheet.create({
   backdrop: { backgroundColor: '#0D201840' },
   sheetPosition: { position: 'absolute', top: 0, left: 0, right: 0, justifyContent: 'flex-end', alignItems: 'center' },
   floatingAdd: { position: 'absolute', right: 20, bottom: 20, minHeight: 56, paddingHorizontal: 20, borderRadius: 28, backgroundColor: c.primary, flexDirection: 'row', alignItems: 'center', gap: 8, elevation: 8, shadowColor: c.text, shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+  floatingUndo: { position: 'absolute', left: 20, bottom: 20, borderRadius: 24, overflow: 'hidden', elevation: 6, shadowColor: c.text, shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+  floatingUndoFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: c.primary },
+  floatingUndoContent: { zIndex: 1, minHeight: 48, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  floatingUndoLabel: { fontSize: 14 },
   sheet: { width: '100%', maxWidth: 520, maxHeight: '90%', backgroundColor: c.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 40, gap: 14 },
   compactSheet: { maxHeight: '65%', paddingBottom: 16, gap: 8 },
   grabber: { width: 40, height: 4, borderRadius: 4, backgroundColor: c.border, alignSelf: 'center', marginBottom: 8 },

@@ -8,9 +8,9 @@ import Animated, { FadeIn, FadeInUp, FadeInDown, FadeOut, FadeOutDown, ZoomIn, S
 import { useFonts } from 'expo-font';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { actions, errorMessage, getShopSnapshot, load, useShops } from './src/store';
+import { actions, errorMessage, getShopSnapshot, load, useShops, UNDO_MS } from './src/store';
 import { activeItems, doneItems, formatCode, GROUP_ICONS, itemSuggestions, itemDropSlot, listItems, orderedGroups, mergeCategoryOrder, storeInitials, type GroupIcon, type Item, type Shop } from './src/model';
-import { Button, Icon, IconButton, EditingRegion, EditingSurface, useFinishEditing, InlineInput, Sheet, SwipeToDelete, FloatingAddButton, ui } from './src/ui';
+import { Button, Icon, IconButton, EditingRegion, EditingSurface, useFinishEditing, InlineInput, Sheet, SwipeToDelete, FloatingAddButton, FloatingUndoButton, ui } from './src/ui';
 import { colors as c, fonts as f, entityTone } from './src/theme';
 
 import { runOnJS } from 'react-native-worklets';
@@ -223,10 +223,9 @@ function CategoryBadge({ shop, id }: { shop: Shop; id: string }) {
 
 function ItemDragPreview({ shop, item }: { shop: Shop; item: Item }) {
   return <View style={s.item}>
-    <View style={[StyleSheet.absoluteFill, s.item]}><View style={s.checkboxTarget}><View style={s.checkbox} /></View></View>
-    <View style={s.itemTextOverlay}><Text style={[s.flex, s.itemName]}>{item.name}</Text>
-      <View style={[s.itemCategoryAction, { justifyContent: 'center' }]}><CategoryBadge shop={shop} id={item.groupId} /></View>
-    </View>
+    <View style={s.checkboxTarget}><View style={s.checkbox} /></View>
+    <View style={s.itemNameTarget}><Text style={s.itemName}>{item.name}</Text></View>
+    <View style={[s.itemCategoryAction, { justifyContent: 'center' }]}><CategoryBadge shop={shop} id={item.groupId} /></View>
   </View>;
 }
 
@@ -281,23 +280,20 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
             onPress={() => { if (!drag.held.current) toggle(); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} style={s.checkboxTarget}>
             <View style={[s.checkbox, item.done && s.checked]}>{item.done && <Animated.View entering={ZoomIn.duration(160).reduceMotion(ReduceMotion.System)}><Icon name="check" size={15} color={c.white} /></Animated.View>}</View>
           </Pressable>
-          <View style={s.flex} pointerEvents="none" />
-          </View></DraxHandle>
-          <View pointerEvents="box-none" style={s.itemTextOverlay}>
-          <View pointerEvents="box-none" style={s.flex}><Pressable style={s.itemNameTarget} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}
-            accessibilityHint={item.done ? 'Tap to rename. Swipe left to delete.' : manualOrder ? 'Tap the text to edit. Hold elsewhere on the row to move. Swipe left to delete.' : 'Tap to edit. Choose By group in the shop menu to drag items.'}
+          <Pressable style={s.itemNameTarget} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}
+            accessibilityHint={item.done ? 'Tap to edit. Swipe left to delete.' : manualOrder ? 'Tap to edit. Hold anywhere to drag. Swipe left to delete.' : 'Tap to edit. Choose By group in the shop menu to drag items.'}
             accessibilityActions={[{ name: 'delete', label: 'Delete item' }, { name: 'increment', label: 'Move item later' }, { name: 'decrement', label: 'Move item earlier' }]}
             onAccessibilityAction={event => { const name = event.nativeEvent.actionName; if (name === 'delete') actions.deleteItem(shop.id, id); else move(name === 'increment' ? 1 : -1); }}
             onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp', 'ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}
             onPress={() => { if (!drag.held.current) editItem(id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY}>
             <Text style={[s.itemName, item.done && s.doneName]}>{item.name}</Text>
-          </Pressable></View>
+          </Pressable>
           {action(showCategory && <Pressable accessibilityRole="button" accessibilityLabel={`Change category for ${item.name}`}
             accessibilityHint={`Current category: ${shop.groups[item.groupId]?.name ?? 'Unknown'}`} style={{ minHeight: 60, justifyContent: 'center' }}
             onPress={() => { if (!drag.held.current) editItem(id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY}>
             <ItemCategory shop={shop} groupId={item.groupId} />
           </Pressable>, s.itemCategoryAction)}
-          </View>
+          </View></DraxHandle>
         </View>}
       </SwipeToDelete></Animated.View>
     </DraxView>
@@ -622,13 +618,9 @@ function AddItem({ shop, close, initialCategory, editingId, onAdded }: { shop: S
   const [query, setQuery] = useState(editing?.name ?? '');
   const [suggestionsHidden, setSuggestionsHidden] = useState(false);
   const [error, setError] = useState('');
-  const manualCategory = useRef(Boolean(initialCategory || editing));
   const suggestions = editing || suggestionsHidden ? [] : itemSuggestions(data.shops, shop, query);
   const type = (value: string) => {
     setQuery(value); setSuggestionsHidden(false); setError('');
-    if (!value.trim()) manualCategory.current = Boolean(initialCategory);
-    const match = itemSuggestions(data.shops, shop, value)[0];
-    if (match && !manualCategory.current) setCategory(match.groupId);
   };
   const add = (name: string) => {
     if (editingId) {
@@ -638,18 +630,18 @@ function AddItem({ shop, close, initialCategory, editingId, onAdded }: { shop: S
     } else { const id = actions.addItem(shop.id, category, name); onAdded?.(id, name.trim(), category); }
   };
   return <Sheet visible compact canSwipeDown={() => scrollY.current <= 1} title={addingCategory ? 'Add category' : editing ? 'Edit item' : 'Add item'} onShow={focusInput} onClose={() => { Keyboard.dismiss(); close(); }}><EditingRegion style={{ flexShrink: 1 }}>
-    {addingCategory ? <NewCategory embedded scrollOffset={scrollY} shop={shop} created={id => { setCategory(id); manualCategory.current = true; }}
+    {addingCategory ? <NewCategory embedded scrollOffset={scrollY} shop={shop} created={id => { setCategory(id); }}
       close={() => { setAddingCategory(false); scrollY.current = 0; focusInput(); }} /> : <View style={s.itemComposer}><ScrollView onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16} style={{ maxHeight: 260, flexShrink: 1 }} keyboardShouldPersistTaps="handled" nestedScrollEnabled bounces={false}>
       <View style={s.composerInput}><InlineInput inputRef={input} label={editing ? "Edit item name" : "New item name"} placeholder={editing ? "Item name" : "Add item…"} keepOpen={!editing} submitLabel={editing ? "Save item" : "Add item"} onAdd={add}
         value={query} onValueChange={type} /></View>
       {suggestions.length > 0 && <ScrollView style={s.suggestions} keyboardShouldPersistTaps="handled" nestedScrollEnabled bounces={false}>{suggestions.map(option => <Pressable key={option.name}
         accessibilityRole="button" accessibilityLabel={`Suggest ${option.name}, ${shop.groups[option.groupId].name}`}
-        onPress={() => { setQuery(option.name); setCategory(option.groupId); setSuggestionsHidden(true); manualCategory.current = false; }} style={s.suggestion}>
+        onPress={() => { setQuery(option.name); setCategory(option.groupId); setSuggestionsHidden(true); }} style={s.suggestion}>
         <Icon name={shop.groups[option.groupId].icon ?? 'bag'} color={entityTone(option.groupId, groups).color} size={19} />
         <Text style={[s.link, s.flex]}>{option.name}</Text><Text style={s.caption}>{shop.groups[option.groupId].name}</Text>
       </Pressable>)}</ScrollView>}
       <Text style={s.selectedCategoryLabel}>Category: {shop.groups[category]?.name ?? 'Choose a category'}</Text>
-      <CategoryButtons shop={shop} selected={category} add={() => { scrollY.current = 0; setAddingCategory(true); }} select={id => { manualCategory.current = true; setCategory(id); setError(''); }} />
+      <CategoryButtons shop={shop} selected={category} add={() => { scrollY.current = 0; setAddingCategory(true); }} select={id => { setCategory(id); setError(''); }} />
       <Pressable accessibilityRole="button" accessibilityLabel={editing ? "Cancel editing item" : "Cancel adding item"} style={s.textButton} onPress={() => { Keyboard.dismiss(); close(); }}><Text style={s.link}>Cancel</Text></Pressable>
       {Boolean(error) && <Text accessibilityRole="alert" style={ui.errorText}>{error}</Text>}
     </ScrollView></View>}
@@ -867,9 +859,7 @@ function Main() {
       </View>
       {shop && <View style={StyleSheet.absoluteFill}><ShoppingList key={shop.id} shop={shop} replaced={setSelected} back={() => setSelected(null)} /></View>}
     </View>
-    {undo && <Animated.View entering={fadeIn} exiting={fadeOut} style={s.undoBanner} accessibilityLiveRegion="polite">
-      <Text numberOfLines={1} style={s.undoLabel}>{undo.label}</Text><Pressable accessibilityRole="button" accessibilityLabel="Undo deletion" onPress={actions.undo} style={s.undoButton}><Text style={s.undoText}>Undo</Text></Pressable>
-    </Animated.View>}
+    {undo && <FloatingUndoButton key={undo.startedAt} label={undo.label} onPress={actions.undo} duration={UNDO_MS} />}
   </KeyboardAvoidingView>;
 }
 
@@ -917,8 +907,6 @@ const s = StyleSheet.create({
   addModes: { flexDirection: 'row', gap: 10 }, addMode: { flex: 1, minHeight: 62, borderWidth: 1, borderColor: c.border, borderRadius: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addModeSelected: { backgroundColor: c.primarySoft, borderColor: c.primary },
   dropTarget: { borderRadius: 12 },
-  undoBanner: { position: 'absolute', bottom: 16, left: 16, right: 16, borderRadius: 14, backgroundColor: c.text, flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 6, gap: 12, elevation: 6 },
-  undoLabel: { flex: 1, fontFamily: f.medium, fontSize: 13, color: c.white }, undoButton: { minHeight: 50, minWidth: 62, alignItems: 'center', justifyContent: 'center' }, undoText: { fontFamily: f.bold, fontSize: 14, color: '#B9E0C5' },
   storesContent: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 24, paddingBottom: 112 },
   homeHeader: { backgroundColor: c.header, borderBottomWidth: 1, borderBottomColor: c.border, paddingHorizontal: 24, paddingTop: 28, paddingBottom: 24 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
@@ -970,7 +958,7 @@ const s = StyleSheet.create({
   groupHeading: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 52 }, groupHeaderTarget: { flex: 1, minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 5 },
   groupName: { flexShrink: 1, fontFamily: f.semibold, fontSize: 17, color: c.text }, item: { flexDirection: 'row', minHeight: 64, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: c.border },
   checkboxTarget: { width: 44, minHeight: 64, alignItems: 'center', justifyContent: 'center' }, checkbox: { width: 22, height: 22, borderWidth: 1.8, borderColor: c.muted, borderRadius: 3, alignItems: 'center', justifyContent: 'center' },
-  checked: { backgroundColor: c.primary, borderColor: c.primary }, itemTextOverlay: { flex: 1, marginLeft: 52, marginRight: 11, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48 }, itemNameTarget: { alignSelf: 'flex-start', maxWidth: '100%' },
+  checked: { backgroundColor: c.primary, borderColor: c.primary }, itemNameTarget: { flex: 1, minHeight: 60, justifyContent: 'center' },
   itemName: { fontFamily: f.medium, fontSize: 18, color: c.text, lineHeight: 23 }, doneName: { color: c.muted, textDecorationLine: 'line-through' },
   emptyGroup: { minHeight: 44, justifyContent: 'center', paddingLeft: 25 }, noGroups: { gap: 10, paddingVertical: 26 },
   addGroup: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 48, marginTop: 2 },
