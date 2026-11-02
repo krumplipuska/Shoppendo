@@ -281,6 +281,7 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
           </Pressable>
           <View style={s.flex} pointerEvents="none" />
           </View></DraxHandle>
+          <View pointerEvents="none" style={s.itemDivider} />
           <View pointerEvents="box-none" style={s.itemTextOverlay}>
           <View pointerEvents="box-none" style={s.flex}><Pressable style={s.itemNameTarget} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}
             accessibilityHint={item.done ? 'Tap to rename. Swipe left to delete.' : manualOrder ? 'Tap the text to edit. Hold elsewhere on the row to move. Swipe left to delete.' : 'Tap to edit. Choose By group in the shop menu to drag items.'}
@@ -959,7 +960,8 @@ const s = StyleSheet.create({
   selectedIcon: { borderColor: c.primary, backgroundColor: c.primarySoft }, iconLabel: { fontFamily: f.medium, fontSize: 10, color: c.muted, textTransform: 'capitalize' },
   editActions: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 8 },
   groupHeading: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 52 }, groupHeaderTarget: { flex: 1, minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  groupName: { flexShrink: 1, fontFamily: f.semibold, fontSize: 17, color: c.text }, item: { flexDirection: 'row', minHeight: 64, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: c.border },
+  groupName: { flexShrink: 1, fontFamily: f.semibold, fontSize: 17, color: c.text }, item: { flexDirection: 'row', minHeight: 64, alignItems: 'center' },
+  itemDivider: { position: 'absolute', left: 52, right: 0, bottom: 0, height: StyleSheet.hairlineWidth * 2, backgroundColor: c.border },
   checkboxTarget: { width: 44, minHeight: 64, alignItems: 'center', justifyContent: 'center' }, checkbox: { width: 22, height: 22, borderWidth: 1.8, borderColor: c.muted, borderRadius: 3, alignItems: 'center', justifyContent: 'center' },
   checked: { backgroundColor: c.primary, borderColor: c.primary }, itemTextOverlay: { flex: 1, marginLeft: 52, marginRight: 11, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48 }, itemNameTarget: { alignSelf: 'flex-start', maxWidth: '100%' },
   itemName: { fontFamily: f.medium, fontSize: 18, color: c.text, lineHeight: 23 }, doneName: { color: c.muted, textDecorationLine: 'line-through' },
