@@ -371,7 +371,10 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
   const preview = useContext(ItemDragContext);
   const token = useRef(0);
   const { motion, hover, setLift } = useRowMotion(shop.id);
-  const tone = entityTone(shop.id, shops.map(shop => shop.id));
+  const groups = orderedGroups(shop);
+  const count = Object.values(shop.items).filter(item => !item.deleted && !item.done && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted).length;
+  const pickingOrder = groups.slice(0, 3).map(id => shop.groups[id].name).join(' → ') || 'No categories yet';
+  const details = <><Text style={s.caption}>{count} {count === 1 ? 'item' : 'items'}</Text><Text numberOfLines={1} style={s.caption}>{pickingOrder}</Text></>;
   const move = (direction: number) => {
     const order = shops.map(s => s.id); const from = order.indexOf(shop.id); const to = from + direction;
     if (to < 0 || to >= order.length) return;
@@ -379,7 +382,7 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
   };
   return <Animated.View entering={Platform.OS === 'web' ? undefined : fadeIn} exiting={fadeOut} collapsable={false}>
     {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle snapDelay={0} snapDuration={200} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-      renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={s.storeRow}><View style={[s.storeBadge, { backgroundColor: tone.soft }]}><Text style={[s.storeInitials, { color: tone.color }]}>{storeInitials(shop.name)}</Text></View><Text style={[s.flex, s.storeName]}>{shop.name}</Text><Icon name="share" color={tone.color} /><Icon name="right" color={tone.color} /></View></Animated.View>}
+      renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={s.storeRow}><View style={[s.storeBadge, { backgroundColor: c.primarySoft }]}><Text style={[s.storeInitials, { color: c.primary }]}>{storeInitials(shop.name)}</Text></View><View style={s.flex}><Text numberOfLines={1} style={s.storeName}>{shop.name}</Text>{details}</View><Icon name="share" color={c.primary} /><Icon name="right" color={c.primary} /></View></Animated.View>}
       payload={{ kind: 'store', id: shop.id, shopId: '' } satisfies Drag}
       acceptsDrag={payload => accepts(payload, '', 'store') && payload.id !== shop.id}
       onDragStart={event => { drag.start(); setLift(true); token.current = preview?.start(shop.id, event) ?? 0; }}
@@ -392,12 +395,12 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
           <DraxHandle style={StyleSheet.absoluteFill}><View style={s.storeDragArea} pointerEvents="box-none">
             <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel={`Open ${shop.name} row`}
               onPress={() => { if (!drag.held.current) open(shop.id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} />
-            <View pointerEvents="none" style={[s.storeBadge, { backgroundColor: tone.soft }]}><Text style={[s.storeInitials, { color: tone.color }]}>{storeInitials(shop.name)}</Text></View>
+            <View pointerEvents="none" style={[s.storeBadge, { backgroundColor: c.primarySoft }]}><Text style={[s.storeInitials, { color: c.primary }]}>{storeInitials(shop.name)}</Text></View>
             <View pointerEvents="none" style={s.flex} />
-            {action(<IconButton icon="right" color={tone.color} label={`Open ${shop.name}`} onPress={() => { if (!drag.held.current) open(shop.id); }} />)}
+            {action(<IconButton icon="right" color={c.primary} label={`Open ${shop.name}`} onPress={() => { if (!drag.held.current) open(shop.id); }} />)}
           </View></DraxHandle>
           <View pointerEvents="box-none" style={s.storeTextOverlay}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Open ${shop.name} store`} style={s.nameTouch}
+            <Pressable accessibilityRole="button" accessibilityLabel={`Open ${shop.name} store, ${count} items, ${pickingOrder}`} style={[s.nameTouch, { marginRight: 88 }]}
               onPress={() => { if (!drag.held.current) open(shop.id); }} onLongPress={() => { if (!drag.held.current) edit(); }} delayLongPress={DRAG_DELAY}
               accessibilityHint="Hold the name to rename. Hold elsewhere on the row to drag. Swipe left to remove."
               accessibilityActions={[{ name: 'edit', label: 'Rename store' }, { name: 'delete', label: 'Remove store' }, { name: 'increment', label: 'Move store later' }, { name: 'decrement', label: 'Move store earlier' }]}
@@ -405,8 +408,9 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
               onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.key === 'F2') edit(); else if (key.altKey && ['ArrowUp', 'ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}>
               <Text numberOfLines={1} style={s.storeName}>{shop.name}</Text>
             </Pressable>
+            <View pointerEvents="none">{details}</View>
           </View>
-          <IconButton icon="share" color={tone.color} solid={shop.shared} label={`Share ${shop.name}${shop.shared ? ', shared store' : ''}`} style={s.storeShareButton} onPress={() => { if (!drag.held.current) share(); }} />
+          <IconButton icon="share" color={c.primary} solid={shop.shared} label={`Share ${shop.name}${shop.shared ? ', shared store' : ''}`} style={s.storeShareButton} onPress={() => { if (!drag.held.current) share(); }} />
         </View>}
       </SwipeToDelete></Animated.View>
     </DraxView>}
@@ -427,8 +431,8 @@ function ShopList({ open }: { open: (id: string) => void }) {
   const sharedShop = data.shops.find(shop => shop.id === sharing);
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   useEffect(() => { if (editing) requestAnimationFrame(() => scroll.current?.scrollTo({ y: 0, animated: true })); }, [editing]);
-  return <ItemDragContext.Provider value={dragList}><View style={s.flex}>
-    <View style={s.homeHeader}><View style={s.titleRow}><View style={s.flex}><Text accessibilityRole="header" style={s.title}>Stores</Text></View></View></View>
+  return <ItemDragContext.Provider value={dragList}><View style={s.storesPage}>
+    <View style={s.homeHeader}><View style={s.titleRow}><View style={s.flex}><Text accessibilityRole="header" style={s.title}>Stores</Text><Text style={s.homeSubtitle}>A picking order for every store.</Text></View></View></View>
     <DraxView style={s.flex} draggable={false} receptive={false} onMeasure={dragList.measureViewport}><DraxScrollView ref={instance => { scroll.current = instance as unknown as React.ComponentRef<typeof ScrollView>; }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} contentContainerStyle={s.storesContent} style={s.flex}>
       {editing && data.shops.some(shop => shop.id === editing) && <NameEditor name={data.shops.find(shop => shop.id === editing)!.name} label="Edit store name" save={name => actions.renameShop(editing, name)} close={() => setEditing(null)} />}
       <View style={s.storeRows}><View>{data.shops.map(shop => <StoreRow key={shop.id} shop={shop} shops={data.shops} open={open} share={() => setSharing(shop.id)}
@@ -881,10 +885,10 @@ const s = StyleSheet.create({
   storeTitleTouch: { flexShrink: 1, justifyContent: 'center' },
   currentStoreName: { fontFamily: f.bold, fontSize: 22, lineHeight: 28, includeFontPadding: false, color: c.text },
   nameTouch: { alignSelf: 'flex-start', maxWidth: '100%' },
-  storeTextOverlay: { position: 'absolute', left: 84, right: 108, top: 0, bottom: 0, justifyContent: 'center' },
-  storeShareButton: { position: 'absolute', right: 60, top: 24 },
+  storeTextOverlay: { position: 'absolute', left: 76, right: 16, top: 0, bottom: 0, justifyContent: 'center' },
+  storeShareButton: { position: 'absolute', right: 52, top: 7 },
   groupTextOverlay: { position: 'absolute', left: 44, right: 104, top: 0, bottom: 0, justifyContent: 'center' },
-  storeDragArea: { flex: 1, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  storeDragArea: { flex: 1, paddingHorizontal: 16, paddingTop: 7, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   storeOpen: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48 },
   addModes: { flexDirection: 'row', gap: 10 }, addMode: { flex: 1, minHeight: 62, borderWidth: 1, borderColor: c.border, borderRadius: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addModeSelected: { backgroundColor: c.primarySoft, borderColor: c.primary },
@@ -892,12 +896,14 @@ const s = StyleSheet.create({
   undoBanner: { position: 'absolute', bottom: 16, left: 16, right: 16, borderRadius: 14, backgroundColor: c.text, flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 6, gap: 12, elevation: 6 },
   undoLabel: { flex: 1, fontFamily: f.medium, fontSize: 13, color: c.white }, undoButton: { minHeight: 50, minWidth: 62, alignItems: 'center', justifyContent: 'center' }, undoText: { fontFamily: f.bold, fontSize: 14, color: '#B9E0C5' },
   storesContent: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 24, paddingBottom: 112 },
-  homeHeader: { backgroundColor: c.header, borderBottomWidth: 1, borderBottomColor: c.border, paddingHorizontal: 24, paddingTop: 28, paddingBottom: 24 },
+  homeSubtitle: { fontFamily: f.regular, fontSize: 16, color: c.muted },
+  storesPage: { flex: 1, backgroundColor: '#EFF4ED' },
+  homeHeader: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 0 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   title: { fontFamily: f.bold, fontSize: 32, lineHeight: 40, color: c.text, flexShrink: 1 },
-  storeRows: { gap: 12 }, storeRow: { minHeight: 92, padding: 16, marginBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: '#F0F5EE', borderRadius: 20 },
+  storeRows: { gap: 12 }, storeRow: { minHeight: 92, padding: 16, marginBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
   storeNameWrap: { flex: 1, gap: 4 }, storeName: { fontFamily: f.bold, color: c.text, fontSize: 18 },
-  storeBadge: { width: 52, height: 52, borderRadius: 16, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' },
+  storeBadge: { width: 44, height: 44, borderRadius: 12, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' },
   storeInitials: { fontFamily: f.bold, fontSize: 20, color: c.primary },
   emptyStores: { alignItems: 'center', paddingVertical: 32, gap: 10 }, emptyTitle: { fontFamily: f.semibold, fontSize: 18, color: c.text },
   caption: { fontFamily: f.regular, fontSize: 13, color: c.muted, lineHeight: 20 },
