@@ -247,6 +247,7 @@ export function Sheet({ visible, title, children, onClose, onShow, compact = fal
       <Pressable style={StyleSheet.absoluteFill} onPress={() => dismiss.current()} accessibilityLabel="Close dialog" accessibilityRole="button" />
       <NativeAnimated.View pointerEvents="box-none" style={[ui.sheetPosition, { bottom: keyboardGap }]}>
         <NativeAnimated.View {...pan.panHandlers} accessibilityViewIsModal style={[ui.sheet, compact && ui.compactSheet, { transform: [{ translateY: offset }] }]}>
+          <View pointerEvents="none" style={[ui.sheetUnderlay, { height }]} />
           <View style={[ui.grabber, compact && { marginBottom: 0 }]} />
           <View style={ui.sheetHeading}><Text accessibilityRole="header" style={ui.sheetTitle}>{title}</Text><IconButton icon="close" label="Close" onPress={() => dismiss.current()} /></View>
           {children}
@@ -278,6 +279,7 @@ export const ui = StyleSheet.create({
   sheetPosition: { position: 'absolute', top: 0, left: 0, right: 0, justifyContent: 'flex-end', alignItems: 'center' },
   floatingAdd: { position: 'absolute', right: 20, bottom: 20, minHeight: 56, paddingHorizontal: 20, borderRadius: 28, backgroundColor: c.primary, flexDirection: 'row', alignItems: 'center', gap: 8, elevation: 8, shadowColor: c.text, shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
   sheet: { width: '100%', maxWidth: 520, maxHeight: '90%', backgroundColor: c.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 40, gap: 14 },
+  sheetUnderlay: { position: 'absolute', top: '100%', left: 0, right: 0, backgroundColor: c.white },
   compactSheet: { maxHeight: '65%', paddingBottom: 16, gap: 8 },
   grabber: { width: 40, height: 4, borderRadius: 4, backgroundColor: c.border, alignSelf: 'center', marginBottom: 8 },
   sheetHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 },

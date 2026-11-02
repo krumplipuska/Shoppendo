@@ -334,10 +334,14 @@ function AddStore({ open, close }: { open: (id: string) => void; close: () => vo
   const input = useRef<React.ComponentRef<typeof TextInput>>(null);
   const focusInput = useCallback(() => { requestAnimationFrame(() => input.current?.focus()); }, []);
   const scrollY = useRef(0);
-  const create = (name: string) => { const id = actions.addShop(name); Keyboard.dismiss(); close(); open(id); };
+  const [storeName, setStoreName] = useState('');
   const [joinId, setJoinId] = useState('');
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState('');
+  const create = () => {
+    try { const id = actions.addShop(storeName); Keyboard.dismiss(); close(); open(id); }
+    catch (error) { setError(errorMessage(error)); }
+  };
   async function join() {
     setJoining(true); setError('');
     try { const id = await actions.join(joinId); Keyboard.dismiss(); close(); open(id); }
@@ -349,20 +353,21 @@ function AddStore({ open, close }: { open: (id: string) => void; close: () => vo
       onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16} contentContainerStyle={s.addStoreForm}>
     <View style={s.addModes}>
       {(['new', 'join'] as const).map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={value === 'new' ? 'New store' : 'Join by ID'}
-        accessibilityState={{ selected: mode === value }} onPress={() => { setMode(value); setError(''); focusInput(); }} style={[s.addMode, mode === value && s.addModeSelected]}>
+        disabled={joining} accessibilityState={{ selected: mode === value }} onPress={() => { setMode(value); setError(''); focusInput(); }} style={[s.addMode, mode === value && s.addModeSelected]}>
         <Icon name={value === 'new' ? 'bag' : 'share'} size={20} /><Text style={s.link}>{value === 'new' ? 'New store' : 'Join by ID'}</Text>
       </Pressable>)}
     </View>
-    {mode === 'new' ? <>
-      <Text style={s.caption}>Start a list with your usual store groups.</Text>
-      <View style={s.composerInput}><InlineInput inputRef={input} label="New store name" placeholder="Store name" maxLength={80} keepOpen={false} submitLabel="Create store" onAdd={create} /></View>
-    </> : <>
-      <Text style={s.caption}>Paste the shop ID someone shared with you.</Text>
-      <TextInput ref={input} accessibilityLabel="Shop ID" placeholder="Shop ID" placeholderTextColor={c.muted} value={joinId} onChangeText={setJoinId}
-        style={[ui.input, s.editStoreInput]} autoCapitalize="characters" autoCorrect={false} maxLength={40} returnKeyType="go"
-        onSubmitEditing={() => { if (joinId.trim() && !joining) void join(); }} />
-      <Button label="Join store" busy={joining} disabled={!joinId.trim()} onPress={() => void join()} />
-    </>}
+    <Text style={s.caption}>{mode === 'new' ? 'Give this store its own picking order.' : 'Enter the ID shared with you.'}</Text>
+    <View style={{ gap: 4 }}>
+      <Text style={s.fieldLabel}>{mode === 'new' ? 'Store name' : 'Store ID'}</Text>
+      <TextInput ref={input} accessibilityLabel={mode === 'new' ? 'Store name' : 'Store ID'} placeholder={mode === 'new' ? 'Store name' : 'Store ID'}
+        placeholderTextColor={c.muted} value={mode === 'new' ? storeName : joinId} onChangeText={mode === 'new' ? setStoreName : setJoinId}
+        style={[ui.input, s.editStoreInput, { borderColor: c.primary }]} autoCapitalize={mode === 'new' ? 'words' : 'characters'}
+        autoCorrect={mode === 'new'} maxLength={mode === 'new' ? 80 : 40} returnKeyType="done"
+        onSubmitEditing={() => { if (mode === 'new') { if (storeName.trim()) create(); } else if (joinId.trim() && !joining) void join(); }} />
+    </View>
+    <Button label={mode === 'new' ? 'Create store' : 'Join store'} busy={joining}
+      disabled={!(mode === 'new' ? storeName : joinId).trim()} onPress={mode === 'new' ? create : join} />
     {Boolean(error) && <Text accessibilityRole="alert" style={ui.errorText}>{error}</Text>}
   </ScrollView></EditingRegion></Sheet>;
 }
@@ -911,7 +916,8 @@ const s = StyleSheet.create({
   groupTextOverlay: { position: 'absolute', left: 44, right: 104, top: 0, bottom: 0, justifyContent: 'center' },
   storeDragArea: { flex: 1, paddingHorizontal: 16, paddingTop: 7, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   storeOpen: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48 },
-  addModes: { flexDirection: 'row', gap: 10 }, addMode: { flex: 1, minHeight: 62, borderWidth: 1, borderColor: c.border, borderRadius: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  fieldLabel: { fontFamily: f.semibold, fontSize: 14, color: c.text },
+  addModes: { flexDirection: 'row', gap: 10 }, addMode: { flex: 1, minHeight: 50, borderWidth: 1, borderColor: c.border, borderRadius: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addModeSelected: { backgroundColor: c.primarySoft, borderColor: c.primary },
   dropTarget: { borderRadius: 12 },
   undoBanner: { position: 'absolute', bottom: 16, left: 16, right: 16, borderRadius: 14, backgroundColor: c.text, flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 6, gap: 12, elevation: 6 },
