@@ -154,8 +154,8 @@ export function Button({ label, onPress, secondary = false, disabled = false, bu
   </Pressable>;
 }
 
-export function InlineInput({ placeholder, label, onAdd, autoFocus, initial = '', submitLabel = 'Add', inputRef, onCancel, maxLength = 200, keepOpen = true, onValueChange, value: controlledValue }: {
-  placeholder: string; label: string; onAdd: (value: string) => void; initial?: string; submitLabel?: string;
+export function InlineInput({ placeholder, leadingIcon, label, onAdd, autoFocus, initial = '', submitLabel = 'Add', inputRef, onCancel, maxLength = 200, keepOpen = true, onValueChange, value: controlledValue }: {
+  placeholder: string; leadingIcon?: GroupIcon; label: string; onAdd: (value: string) => void; initial?: string; submitLabel?: string;
   autoFocus?: boolean; inputRef?: React.RefObject<InputHandle | null>; onCancel?: () => void; maxLength?: number; keepOpen?: boolean; onValueChange?: (value: string) => void; value?: string;
 }) {
   const ref = useRef<InputHandle>(null);
@@ -175,6 +175,7 @@ export function InlineInput({ placeholder, label, onAdd, autoFocus, initial = ''
   };
   return <EditingRegion onDismiss={onCancel ? acceptOutside : undefined}>
     <View style={[ui.inline, focused && { borderBottomColor: c.primary }]}>
+      {leadingIcon && <Icon name={leadingIcon} size={22} />}
       <TextInput ref={inputRef ?? ref} accessibilityLabel={label} value={value} onChangeText={setValue}
         placeholder={placeholder} placeholderTextColor={c.muted} style={ui.input} autoFocus={autoFocus}
         returnKeyType="done" submitBehavior="submit" blurOnSubmit={false} onSubmitEditing={submit} onFocus={() => setFocused(true)}

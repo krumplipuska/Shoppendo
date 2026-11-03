@@ -616,16 +616,17 @@ function NewCategory({ shop, created, close, embedded = false, scrollOffset, edi
     if (editingId) { actions.editGroup(shop.id, editingId, value, icon); finish(); return; }
     const id = actions.addGroup(shop.id, value); actions.editGroup(shop.id, id, value, icon); created(id); finish();
   };
-  const form = <EditingRegion style={{ flexShrink: 1 }}>
-    <ScrollView style={{ maxHeight: 260, flexShrink: 1 }} keyboardShouldPersistTaps="handled" bounces={false}
-      onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16}>
-      <View style={s.composerInput}><InlineInput inputRef={input} label={editingId ? 'Category name' : 'New category name'} placeholder="Category name" value={name} onValueChange={setName} onAdd={save}
+  const form = <EditingRegion style={{ maxHeight: 260, flexShrink: 1, gap: 4 }}>
+    <Text style={s.caption}>Category name</Text>
+      <View style={s.composerInput}><InlineInput leadingIcon={icon} inputRef={input} label={editingId ? 'Category name' : 'New category name'} placeholder="Category name" value={name} onValueChange={setName} onAdd={save}
         autoFocus={embedded} keepOpen={false} submitLabel={editingId ? 'Save category' : 'Create category'} maxLength={80} /></View>
+    <Text style={s.fieldLabel}>Choose icon</Text>
+    <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingRight: 12, paddingBottom: 6 }} keyboardShouldPersistTaps="handled"
+      onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16}>
       <View style={s.iconGrid}>{GROUP_ICONS.map(option => <Pressable key={option} accessibilityRole="radio" accessibilityLabel={`${option} icon`}
         accessibilityState={{ checked: icon === option, selected: icon === option }} onPress={() => setIcon(option)} style={[s.iconChoice, icon === option && s.selectedIcon]}>
         <Icon name={option} size={24} />{icon === option && <View style={s.selectionBadge}><Icon name="check" color={c.white} size={13} /></View>}
       </Pressable>)}</View>
-      <Pressable accessibilityRole="button" accessibilityLabel={editingId ? 'Cancel editing category' : 'Cancel creating category'} onPress={finish} style={s.textButton}><Text style={s.link}>Cancel</Text></Pressable>
     </ScrollView>
   </EditingRegion>;
   return embedded ? form : <Sheet visible compact title={editingId ? 'Edit category' : 'Add category'} canSwipeDown={() => scrollY.current <= 1} onShow={focusInput}
