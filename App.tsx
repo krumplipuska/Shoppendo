@@ -307,32 +307,6 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
   </Animated.View>;
 }
 
-function NameEditor({ name, label, save, close, icon, changeIcon, maxLength = 80 }: {
-  name: string; label: string; save: (name: string) => void; close: () => void;
-  icon?: GroupIcon; changeIcon?: (icon: GroupIcon) => void; maxLength?: number;
-}) {
-  const draft = useRef(name);
-  const [error, setError] = useState('');
-  const dismiss = () => { Keyboard.dismiss(); close(); };
-  const acceptOutside = () => {
-    try { if (draft.current.trim()) save(draft.current); dismiss(); }
-    catch (error) { setError((error as Error).message); return false; }
-  };
-  return <EditingRegion onDismiss={acceptOutside}>
-    <View style={s.inlineEditor}>
-      <InlineInput initial={name} label={label} placeholder="Name" autoFocus maxLength={maxLength} keepOpen={false} submitLabel="Save name"
-        onValueChange={value => { draft.current = value; }} onAdd={value => { save(value); dismiss(); }} />
-      {changeIcon && <View style={s.iconGrid}>{GROUP_ICONS.map(option => <Pressable key={option} accessibilityRole="radio"
-        accessibilityLabel={`${option} icon`} accessibilityState={{ checked: icon === option }}
-        onPress={() => changeIcon(option)} style={[s.iconChoice, icon === option && s.selectedIcon]}>
-        <Icon name={option} size={24} />
-      </Pressable>)}</View>}
-      {Boolean(error) && <Text accessibilityRole="alert" style={ui.errorText}>{error}</Text>}
-      <Pressable accessibilityRole="button" accessibilityLabel="Cancel editing" onPress={dismiss} style={s.textButton}><Text style={s.link}>Cancel</Text></Pressable>
-    </View>
-  </EditingRegion>;
-}
-
 function AddStore({ open, close }: { open: (id: string) => void; close: () => void }) {
   const [mode, setMode] = useState<'new' | 'join'>('new');
   const input = useRef<React.ComponentRef<typeof TextInput>>(null);
@@ -376,7 +350,7 @@ function AddStore({ open, close }: { open: (id: string) => void; close: () => vo
   </ScrollView></EditingRegion></Sheet>;
 }
 
-function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Shop; shops: Shop[]; open: (id: string) => void; share: () => void; edit: () => void; editing: boolean; close: () => void }) {
+function StoreRow({ shop, shops, open, share }: { shop: Shop; shops: Shop[]; open: (id: string) => void; share: () => void }) {
   const drag = useHoldDrag();
   const preview = useContext(ItemDragContext);
   const token = useRef(0);
@@ -403,11 +377,11 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
           </View></Handle>
           <View pointerEvents="box-none" style={s.storeTextOverlay}>
             <Pressable accessibilityRole="button" accessibilityLabel={`Open ${shop.name} store, ${count} ${count === 1 ? 'item' : 'items'}`} style={[s.nameTouch, { marginRight: shop.shared ? 88 : 44 }]}
-              onPress={() => { if (!drag.held.current) open(shop.id); }} onLongPress={() => { if (!drag.held.current) edit(); }} delayLongPress={DRAG_DELAY}
-              accessibilityHint="Hold the name to rename. Hold elsewhere on the row to drag. Swipe left to remove."
-              accessibilityActions={[{ name: 'edit', label: 'Rename store' }, { name: 'delete', label: 'Remove store' }, { name: 'increment', label: 'Move store later' }, { name: 'decrement', label: 'Move store earlier' }]}
-              onAccessibilityAction={event => { const name = event.nativeEvent.actionName; if (name === 'edit') edit(); else if (name === 'delete') actions.removeShop(shop.id); else move(name === 'increment' ? 1 : -1); }}
-              onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.key === 'F2') edit(); else if (key.altKey && ['ArrowUp', 'ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}>
+              onPress={() => { if (!drag.held.current) open(shop.id); }}
+              accessibilityHint="Swipe left to remove."
+              accessibilityActions={[{ name: 'delete', label: 'Remove store' }, { name: 'increment', label: 'Move store later' }, { name: 'decrement', label: 'Move store earlier' }]}
+              onAccessibilityAction={event => { const name = event.nativeEvent.actionName; if (name === 'delete') actions.removeShop(shop.id); else move(name === 'increment' ? 1 : -1); }}
+              onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp', 'ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}>
               <Text numberOfLines={1} style={s.storeName}>{shop.name}</Text>
             </Pressable>
             <View pointerEvents="none">{details}</View>
@@ -416,7 +390,7 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
     );
   };
   return <Animated.View entering={Platform.OS === 'web' ? undefined : fadeIn} exiting={fadeOut} collapsable={false}>
-    {editing ? <NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={close} /> : <DraxView dragHandle snapDelay={0} snapDuration={200} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+    <DraxView dragHandle snapDelay={0} snapDuration={200} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
       renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}>{renderCard()}</Animated.View>}
       payload={{ kind: 'store', id: shop.id, shopId: '' } satisfies Drag}
       acceptsDrag={payload => accepts(payload, '', 'store') && payload.id !== shop.id}
@@ -428,7 +402,7 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
       <Animated.View style={motion}><SwipeToDelete label={shop.name} onDelete={() => actions.removeShop(shop.id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
         renderCard(action)}
       </SwipeToDelete></Animated.View>
-    </DraxView>}
+    </DraxView>
   </Animated.View>;
 }
 
@@ -441,17 +415,12 @@ function ShopList({ open }: { open: (id: string) => void }) {
     const next = dragOrder(current, chosen);
     if (next !== current) actions.reorderShops(next);
   }, 'manual', STORE_GAP);
-  const [editing, setEditing] = useState<string | null>(null);
   const [sharing, setSharing] = useState<string | null>(null);
   const sharedShop = data.shops.find(shop => shop.id === sharing);
-  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
-  useEffect(() => { if (editing) requestAnimationFrame(() => scroll.current?.scrollTo({ y: 0, animated: true })); }, [editing]);
   return <ItemDragContext.Provider value={dragList}><View style={s.storesPage}>
     <View style={s.homeHeader}><View style={s.titleRow}><View style={s.flex}><Text accessibilityRole="header" style={s.title}>Stores</Text><Text style={s.homeSubtitle}>A picking order for every store.</Text></View></View></View>
-    <DraxView style={s.flex} draggable={false} receptive={false} onMeasure={dragList.measureViewport}><DraxScrollView ref={instance => { scroll.current = instance as unknown as React.ComponentRef<typeof ScrollView>; }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} contentContainerStyle={s.storesContent} style={s.flex}>
-      {editing && data.shops.some(shop => shop.id === editing) && <NameEditor name={data.shops.find(shop => shop.id === editing)!.name} label="Edit store name" save={name => actions.renameShop(editing, name)} close={() => setEditing(null)} />}
-      <View style={s.storeRows}>{data.shops.map(shop => <StoreRow key={shop.id} shop={shop} shops={data.shops} open={open} share={() => setSharing(shop.id)}
-        editing={false} edit={() => setEditing(shop.id)} close={() => setEditing(null)} />)}</View>
+    <DraxView style={s.flex} draggable={false} receptive={false} onMeasure={dragList.measureViewport}><DraxScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} contentContainerStyle={s.storesContent} style={s.flex}>
+      <View style={s.storeRows}>{data.shops.map(shop => <StoreRow key={shop.id} shop={shop} shops={data.shops} open={open} share={() => setSharing(shop.id)} />)}</View>
       <ListTail shopId="" kind="store" last={order.at(-1)} />
       {!data.shops.length && <View style={s.emptyStores}><Icon name="bag" size={32} /><Text style={s.emptyTitle}>Your first store</Text><Text style={s.caption}>Tap + to create a store or join by ID.</Text></View>}
     </DraxScrollView></DraxView>
@@ -792,11 +761,17 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
         <Pressable accessibilityRole="button" accessibilityLabel="Back to stores" onPress={closePage} style={s.headerBack}>
           <Icon name="back" />
         </Pressable>
-        {editingStore ? <View style={s.headerCopy}><NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={() => setEditingStore(false)} /></View> : <Pressable style={s.headerCopy} accessibilityRole="button" accessibilityLabel={`${shop.name} store name`} accessibilityHint="Hold the name to rename"
-          onLongPress={() => setEditingStore(true)} delayLongPress={DRAG_DELAY}>
-          <Text accessibilityRole="header" numberOfLines={1} style={s.title}>{shop.name}</Text>
+        <View style={s.headerCopy}>
+          {editingStore ? <TextInput accessibilityLabel="Store name" autoFocus selectTextOnFocus defaultValue={shop.name}
+            style={[s.title, { padding: 0 }]} maxLength={80} returnKeyType="done" submitBehavior="submit"
+            onSubmitEditing={event => {
+              const name = event.nativeEvent.text.trim();
+              if (!name) return;
+              if (name !== shop.name) actions.renameShop(shop.id, name);
+              setEditingStore(false);
+            }} onBlur={() => setEditingStore(false)} /> : <Text accessibilityRole="header" numberOfLines={1} style={s.title}>{shop.name}</Text>}
           <Text style={s.caption}>{flatItems.length} {flatItems.length === 1 ? 'item' : 'items'}</Text>
-        </Pressable>}
+        </View>
         <View style={s.headerActions}>
           <IconButton icon="categories" label="Categories" onPress={startSorting} />
           <IconButton icon="share" label="Share shop" onPress={() => { setMenuOpen(false); setSharing(true); }} />
@@ -805,6 +780,9 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
       </View></GestureDetector>
       {menuOpen && <View style={s.menuPosition}><EditingRegion onDismiss={() => setMenuOpen(false)}>
         <Animated.View entering={fadeIn} style={s.viewMenu}>
+          <Pressable accessibilityRole="button" style={s.menuOption} onPress={() => { setMenuOpen(false); setEditingStore(true); }}>
+            <Text style={s.link}>Rename store</Text>
+          </Pressable>
           <Text style={[s.menuCaption, s.menuShare]}>Sort items</Text>
           <Text style={s.menuCaption}>Choose By group to drag items.</Text>
           {([['group', 'By group'], ['name', 'By name (A–Z)'], ['added', 'By time added (oldest first)']] as const).map(([sort, label]) => <Pressable key={sort} accessibilityRole="radio" accessibilityLabel={label} accessibilityState={{ checked: itemSort === sort }} style={s.menuOption}
