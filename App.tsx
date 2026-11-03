@@ -79,6 +79,9 @@ const ItemEditorContext = createContext<(id: string) => void>(() => {});
 type ItemPreview = { source: string; target: string; after: boolean };
 const ItemDragContext = createContext<ReturnType<typeof useListDrag> | null>(null);
 
+const STORE_GAP = 12;
+const CATEGORY_GAP = 8;
+const ITEM_PANEL_BORDER = 1;
 const DEBUG_DRAG = false;
 function trace(session: number, phase: string, details?: unknown) {
   if (__DEV__ && DEBUG_DRAG) console.debug('[drag]', session, phase, details);
@@ -93,7 +96,7 @@ function hoverFrame({ dimensions, viewState }: DraxRenderHoverContentProps) {
   return { ...hoverSize(dimensions), transformOrigin: grab ? `${grab.x}px ${grab.y}px` : 'center' };
 }
 
-function useListDrag(ids: string[], commit: (preview: ItemPreview) => void, sort = 'manual') {
+function useListDrag(ids: string[], commit: (preview: ItemPreview) => void, sort = 'manual', gap = 0) {
   const sessions = useRef(dragSession()).current;
   // These viewport views have no Drax parent, so their bounds are provider-relative.
   const viewport = useRef<DraxViewMeasurements | undefined>(undefined);
@@ -130,7 +133,7 @@ function useListDrag(ids: string[], commit: (preview: ItemPreview) => void, sort
   useLayoutEffect(() => {
     if (report.current) { trace(report.current, 'resulting order', ids); report.current = 0; }
   });
-  const shifts = preview && active.current ? itemDragLayout(ids, { ...preview, height: active.current.height }).shifts : {};
+  const shifts = preview && active.current ? itemDragLayout(ids, { ...preview, height: active.current.height + gap }).shifts : {};
   return { shifts, measureViewport, dragging: preview !== null,
     start: (id: string, event: DraxDragEventData) => {
       const token = sessions.start();
@@ -167,9 +170,10 @@ function useListDrag(ids: string[], commit: (preview: ItemPreview) => void, sort
         const top = event.dragAbsolutePosition.y - drop.receiver.receiveOffset.y;
         const receiver = drop.receiver.payload;
         const tail = typeof receiver === 'object' && receiver !== null && 'tail' in receiver && receiver.tail === true;
+        const inset = tail && active.current.source.kind === 'item' ? ITEM_PANEL_BORDER : 0;
         landing = {
-          x: event.dragAbsolutePosition.x - drop.receiver.receiveOffset.x,
-          y: tail ? top - height : dragSlotTop(latest.current.ids, { ...chosen, height }, top, drop.receiver.measurements.height),
+          x: event.dragAbsolutePosition.x - drop.receiver.receiveOffset.x + inset,
+          y: tail ? top - height - inset : dragSlotTop(latest.current.ids, { ...chosen, height: height + gap }, top, drop.receiver.measurements.height + gap),
         };
       }
       clear(chosen && chosen.source !== chosen.target ? () => {
@@ -184,7 +188,7 @@ function useListDrag(ids: string[], commit: (preview: ItemPreview) => void, sort
 
 // Shift only the visible contents. The registered receiver stays at its
 // measured position so the animated gap cannot move its own midpoint.
-function useRowMotion(id: string) {
+function useRowMotion(id: string, scaleLift = true) {
   const list = useContext(ItemDragContext);
   const shift = list?.shifts[id] ?? 0;
   const dragging = list?.dragging ?? false;
@@ -193,7 +197,7 @@ function useRowMotion(id: string) {
     transform: [{ translateY: dragging ? withTiming(shift, { duration: 180, reduceMotion: ReduceMotion.System }) : 0 }],
   }));
   const hover = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 + 0.02 * lift.value }],
+    transform: [{ scale: scaleLift ? 1 + 0.02 * lift.value : 1 }],
     shadowOpacity: 0.14 * lift.value,
     elevation: 5 * lift.value,
   }));
@@ -222,9 +226,10 @@ function CategoryBadge({ shop, id }: { shop: Shop; id: string }) {
 function ItemDragPreview({ shop, item }: { shop: Shop; item: Item }) {
   return <View style={s.item}>
     <View style={[StyleSheet.absoluteFill, s.item]}><View style={s.checkboxTarget}><View style={s.checkbox} /></View></View>
-    <View style={s.itemTextOverlay}><Text style={[s.flex, s.itemName]}>{item.name}</Text>
+    <View style={s.itemTextOverlay}><View style={s.itemNameTarget}><Text style={s.itemName}>{item.name}</Text></View>
       <View style={[s.itemCategoryAction, { justifyContent: 'center' }]}><CategoryBadge shop={shop} id={item.groupId} /></View>
     </View>
+    <View style={s.itemDivider} />
   </View>;
 }
 
@@ -250,7 +255,7 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
   const editItem = useContext(ItemEditorContext);
   const preview = useContext(ItemDragContext);
   const token = useRef(0);
-  const { motion, hover, setLift } = useRowMotion(id);
+  const { motion, hover, setLift } = useRowMotion(id, false);
   const drag = useHoldDrag();
   const move = (direction: number) => {
     if (!manualOrder) return;
@@ -435,7 +440,7 @@ function ShopList({ open }: { open: (id: string) => void }) {
     const current = getShopSnapshot().data.shops.map(shop => shop.id);
     const next = dragOrder(current, chosen);
     if (next !== current) actions.reorderShops(next);
-  });
+  }, 'manual', STORE_GAP);
   const [editing, setEditing] = useState<string | null>(null);
   const [sharing, setSharing] = useState<string | null>(null);
   const sharedShop = data.shops.find(shop => shop.id === sharing);
@@ -532,7 +537,7 @@ function ItemArrival({ shop, item, close, start, end }: { shop: Shop; item: { na
 function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: string[]; change: (order: string[]) => void; close: () => void }) {
   const [editor, setEditor] = useState<string | null>(null);
   const order = mergeCategoryOrder(orderedGroups(shop), draft);
-  const dragList = useListDrag(order, chosen => { const next = dragOrder(order, chosen); if (next !== order) change(next); });
+  const dragList = useListDrag(order, chosen => { const next = dragOrder(order, chosen); if (next !== order) change(next); }, 'manual', CATEGORY_GAP);
   const page = usePageBack(close, !dragList.dragging && !editor);
   return <ItemDragContext.Provider value={dragList}><GestureDetector gesture={page.edge} touchAction="pan-y"><Animated.View style={[s.flex, s.shopPage, page.style]}>
     <View style={s.listHeader}><GestureDetector gesture={page.header} touchAction="none"><View style={s.pageHeader}>
@@ -547,7 +552,7 @@ function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: stri
     </View>
     <GestureDetector gesture={page.body} touchAction="pan-y"><View style={s.categoryOrderPage}>
     <ShopScroll page={page} horizontalPadding={0}>
-      <View style={{ gap: 8 }}>{order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} edit={() => setEditor(id)} />)}</View>
+      <View style={{ gap: CATEGORY_GAP }}>{order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} edit={() => setEditor(id)} />)}</View>
       <ListTail shopId={shop.id} kind="group" last={order.at(-1)} />
       {!order.length && <Text style={s.caption}>Add your first category to organize this store.</Text>}
     </ShopScroll>
@@ -937,7 +942,7 @@ const s = StyleSheet.create({
   homeHeader: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 0 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   title: { fontFamily: f.bold, fontSize: 32, lineHeight: 40, color: c.text, flexShrink: 1 },
-  storeRows: { gap: 12 }, storeRow: { minHeight: 88, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  storeRows: { gap: STORE_GAP }, storeRow: { minHeight: 88, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
   storeNameWrap: { flex: 1, gap: 4 }, storeName: { fontFamily: f.bold, color: c.text, fontSize: 18 },
   storeBadge: { width: 52, height: 52, borderRadius: 14, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' },
   storeInitials: { fontFamily: f.bold, fontSize: 24, color: c.primary },
@@ -952,7 +957,7 @@ const s = StyleSheet.create({
   headerCopy: { flex: 1, minWidth: 0, justifyContent: 'center' },
   backLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 4 },
   storeHeading: { alignItems: 'flex-start', gap: 2 },
-  itemPanel: { backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  itemPanel: { backgroundColor: c.white, borderWidth: ITEM_PANEL_BORDER, borderColor: c.border, borderRadius: 14 },
   itemComposer: { paddingBottom: 4, flexShrink: 1 },
   composerInput: { borderWidth: 1.5, borderColor: c.primary, borderRadius: 14, paddingHorizontal: 6, overflow: 'hidden', marginBottom: 6 },
   menuPosition: { position: 'absolute', top: 62, right: 12, zIndex: 20 },
