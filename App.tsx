@@ -581,7 +581,7 @@ function CategoryOrderRow({ shop, id, order, change, edit }: { shop: Shop; id: s
     <Text style={[s.groupName, s.flex]}>{group.name}</Text>
   </>;
   return <Animated.View collapsable={false}><DraxView dragHandle snapDelay={0} snapDuration={0} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-    renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={[s.categoryOrderRow, s.liftedCard]}><View style={s.categoryRowInner}>{content}<View style={gripSlot}>{grip}</View></View></View></Animated.View>}
+    renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={[s.categoryOrderRow, s.liftedCard]}><View style={StyleSheet.absoluteFill}><View style={s.categoryRowInner}><View style={s.categoryRowLabel}>{content}</View><View style={[ui.actionSlot, gripSlot]}>{grip}</View></View></View></View></Animated.View>}
       payload={{ kind: 'group', id, shopId: shop.id } satisfies Drag} acceptsDrag={payload => accepts(payload, shop.id, 'group') && payload.id !== id}
     onDragStart={event => { drag.start(); setLift(true); token.current = preview?.start(id, event) ?? 0; }}
       onDragEnd={event => { drag.stop(); setLift(false); preview?.release(token.current, event, event.cancelled); return DraxSnapbackTargetPreset.None; }}
@@ -590,7 +590,7 @@ function CategoryOrderRow({ shop, id, order, change, edit }: { shop: Shop; id: s
     draggingStyle={s.itemDragOrigin} dragReleasedStyle={s.itemDragOrigin}>
     <Animated.View style={motion}><SwipeToDelete label={group.name} onDelete={() => actions.deleteGroup(shop.id, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop} activeOffsetX={8} failOffsetY={32} touchAction="pan-x">{action =>
       <View style={s.categoryOrderRow}><DraxHandle style={StyleSheet.absoluteFill}><View style={s.categoryRowInner} pointerEvents="box-none">
-        <Pressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 42, gap: 12 }} accessibilityRole="button" accessibilityLabel={`Edit ${group.name} category`} accessibilityHint="Tap to edit. Hold anywhere to drag. Swipe left to delete. Alt+Up or Alt+Down also moves the category."
+        <Pressable style={s.categoryRowLabel} accessibilityRole="button" accessibilityLabel={`Edit ${group.name} category`} accessibilityHint="Tap to edit. Hold anywhere to drag. Swipe left to delete. Alt+Up or Alt+Down also moves the category."
           onPress={() => { if (!drag.held.current) edit(); }}
           accessibilityActions={[{ name: 'delete', label: 'Delete category' }, { name: 'increment', label: 'Move later' }, { name: 'decrement', label: 'Move earlier' }]}
           onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'delete') actions.deleteGroup(shop.id, id); else move(event.nativeEvent.actionName === 'increment' ? 1 : -1); }}
@@ -909,6 +909,7 @@ const s = StyleSheet.create({
   itemArrival: { position: 'absolute', left: 12, right: 12, top: 0, zIndex: 1000, elevation: 40, backgroundColor: c.white, borderRadius: 12, borderWidth: 1, borderColor: c.border, minHeight: 54, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: c.text, shadowOpacity: 0.15, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   orderStoreLabel: { fontFamily: f.medium, color: c.muted, textTransform: 'uppercase', fontSize: 12, marginVertical: 10 },
   categoryOrderRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 6, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  categoryRowLabel: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 42, gap: 12 },
   categoryRowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingLeft: 16 },
   liftedCard: { flex: 1, borderColor: '#85A67D' },
   orderIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
