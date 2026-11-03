@@ -1,5 +1,5 @@
 import { createContext, useContext, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Image, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureDetector, GestureHandlerRootView, GestureStateManager, ScrollView as GestureScrollView, usePanGesture } from 'react-native-gesture-handler';
@@ -283,7 +283,7 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
       style={s.itemDrop} draggingStyle={s.itemDragOrigin} dragReleasedStyle={s.itemDragOrigin}
      >
       <Animated.View style={motion}><SwipeToDelete extraAction={missingAction} label={item.name} onDelete={() => actions.deleteItem(shop.id, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
-        <View style={s.item}>
+        <View style={[s.item, item.missing && s.missingRow]}>
           <DraxHandle style={StyleSheet.absoluteFill}><View style={s.item} pointerEvents="box-none">
           <Pressable accessibilityRole="checkbox" accessibilityLabel={`${item.name}, ${item.done ? 'picked up' : 'to get'}`} accessibilityState={{ checked: item.done }}
             onPress={() => { if (!drag.held.current) toggle(); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} style={[s.checkboxTarget, { position: 'absolute', left: 0, top: 0, bottom: 0 }]}>
@@ -305,7 +305,7 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
           </Pressable>, s.itemCategoryAction)}
           </View>
           </View></DraxHandle>
-          <View pointerEvents="none" style={s.itemDivider} />
+          {!item.missing && !item.done && <View pointerEvents="none" style={s.itemDivider} />}
         </View>}
       </SwipeToDelete></Animated.View>
     </DraxView>
@@ -776,7 +776,6 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
               if (name !== shop.name) actions.renameShop(shop.id, name);
               setEditingStore(false);
             }} onBlur={() => setEditingStore(false)} /> : <Text accessibilityRole="header" numberOfLines={1} style={s.title}>{shop.name}</Text>}
-          <Text style={s.caption}>{flatItems.length} {flatItems.length === 1 ? 'item' : 'items'}</Text>
         </View>
         <View style={s.headerActions}>
           <IconButton icon="categories" label="Categories" onPress={startSorting} />
@@ -784,6 +783,13 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
           <IconButton icon="more" label="Store settings" onPress={() => setMenuOpen(!menuOpen)} />
         </View>
       </View></GestureDetector>
+      <View style={s.statusSummary}>
+        <Text style={s.statusCount}>{flatItems.length} to get</Text>
+        <View style={s.statusDivider} />
+        <View style={[s.statusBadge, s.missingTint]}><Icon name="missing" size={15} color={c.danger} /><Text style={[s.statusCount, { color: c.danger }]}>{missing.length} missing</Text></View>
+        <View style={s.statusDivider} />
+        <View style={s.statusBadge}><Icon name="check" size={15} /><Text style={[s.statusCount, { color: c.primary }]}>{completed.length} done</Text></View>
+      </View>
       {menuOpen && <View style={s.menuPosition}><EditingRegion onDismiss={() => setMenuOpen(false)}>
         <Animated.View entering={fadeIn} style={s.viewMenu}>
           <Pressable accessibilityRole="button" style={s.menuOption} onPress={() => { setMenuOpen(false); setEditingStore(true); }}>
@@ -815,8 +821,8 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
       {!groups.length && <View style={s.noGroups}><Text style={s.emptyTitle}>Start with a category</Text><Text style={s.caption}>Open Categories to create your first category.</Text></View>}
       <ListTail shopId={shop.id} kind="item" last={flatItems.at(-1)?.[0]} />
       <View>
-        {missing.length > 0 && <View style={s.doneSection}><Text style={s.doneLabel}>Missing</Text>{missing.map(([id, item]) => <ItemRow key={id} shop={shop} id={id} item={item} showCategory manualOrder={false} toggle={() => toggle(id)} />)}</View>}
-        {completed.length > 0 && <View style={s.doneSection}><Text style={s.doneLabel}>Done</Text>{completed.map(([id]) => <ItemRow key={id} shop={shop} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={() => toggle(id)} />)}</View>}
+        {missing.length > 0 && <View style={s.doneSection}><Text accessibilityRole="header" style={[s.doneLabel, { color: c.danger }]}>Missing · {missing.length}</Text>{missing.map(([id, item]) => <ItemRow key={id} shop={shop} id={id} item={item} showCategory manualOrder={false} toggle={() => toggle(id)} />)}</View>}
+        {completed.length > 0 && <View style={s.doneSection}><Text accessibilityRole="header" style={s.doneLabel}>Done · {completed.length}</Text>{completed.map(([id]) => <ItemRow key={id} shop={shop} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={() => toggle(id)} />)}</View>}
       </View>
     </ShopScroll></View></GestureDetector></ItemDragContext.Provider></ItemEditorContext.Provider>
     {!topAdding && !editingItem && <FloatingAddButton label="Add item" disabled={!groups.length} onPress={() => setTopAdding(true)} />}
@@ -829,6 +835,10 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
       <DraxProvider><CategoryOrder shop={shop} draft={categoryDraft!} change={setCategoryDraft} close={finishSorting} /></DraxProvider>
     </Animated.View>}
   </Animated.View>;
+}
+
+function LoadingScreen() {
+  return <View style={s.loading}><Image accessibilityLabel="Loading Shoppendo" source={require('./assets/shoppendo-splash.png')} resizeMode="contain" style={{ width: 140, height: 140 }} /></View>;
 }
 
 function Main() {
@@ -857,7 +867,7 @@ function Main() {
       .finally(() => { if (active) setJoining(false); });
     return () => { active = false; };
   }, [ready, invite]);
-  if (!ready) return <View style={s.loading}><Icon name="bag" size={36} />{error ? <><Text style={s.caption}>{error}</Text><Button label="Try again" onPress={() => void load()} /></> : <ActivityIndicator color={c.primary} />}</View>;
+  if (!ready) return error ? <View style={s.loading}><Text style={s.caption}>{error}</Text><Button label="Try again" onPress={() => void load()} /></View> : <LoadingScreen />;
   return <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>
     {joining && <View style={s.errorBanner}><ActivityIndicator color={c.primary} /><Text accessibilityLiveRegion="polite" style={s.caption}>Opening shared store…</Text></View>}
     {Boolean(linkError) && <View accessibilityRole="alert" style={s.errorBanner}><Text style={[s.caption, s.flex]}>{linkError}</Text>{invite && <Pressable accessibilityRole="button" style={s.retry} onPress={() => setInvite({ ...invite })}><Text style={s.link}>Retry</Text></Pressable>}</View>}
@@ -885,7 +895,7 @@ export default function App() {
   });
   return <GestureHandlerRootView style={s.root}><SafeAreaProvider><DraxProvider><StatusBar style="dark" />
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
-      {fontsLoaded || fontError || Platform.OS === 'web' ? <EditingSurface><Main /></EditingSurface> : <View style={s.loading}><ActivityIndicator color={c.primary} /></View>}
+      {fontsLoaded || fontError || Platform.OS === 'web' ? <EditingSurface><Main /></EditingSurface> : <LoadingScreen />}
     </SafeAreaView>
   </DraxProvider></SafeAreaProvider></GestureHandlerRootView>;
 }
@@ -987,7 +997,14 @@ const s = StyleSheet.create({
   itemName: { fontFamily: f.medium, fontSize: 18, color: c.text, lineHeight: 23 }, doneName: { color: c.muted, textDecorationLine: 'line-through' },
   emptyGroup: { minHeight: 44, justifyContent: 'center', paddingLeft: 25 }, noGroups: { gap: 10, paddingVertical: 26 },
   addGroup: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 48, marginTop: 2 },
-  doneSection: { marginTop: 14, paddingTop: 16, borderTopWidth: 1, borderColor: c.border }, doneLabel: { fontFamily: f.medium, fontSize: 13, color: c.muted, marginBottom: 4 },
+  statusSummary: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 4 },
+  statusCount: { fontFamily: f.semibold, fontSize: 14, color: c.text },
+  statusDivider: { width: 1, height: 20, backgroundColor: c.border },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 16, paddingHorizontal: 6, paddingVertical: 4 },
+  missingTint: { backgroundColor: '#F9E9E6' },
+  missingRow: { backgroundColor: '#F9E9E6', borderRadius: 14 },
+  doneSection: { marginVertical: 8, gap: 4 },
+  doneLabel: { fontFamily: f.semibold, fontSize: 16, color: c.muted, marginLeft: 4, marginBottom: 4 },
   idBox: { backgroundColor: c.secondarySoft, borderRadius: 14, padding: 18, gap: 10 }, idLabel: { fontFamily: f.bold, color: c.secondary, fontSize: 10, letterSpacing: 1 },
   idCode: { fontFamily: f.bold, color: c.secondary, fontSize: 18, lineHeight: 28 }, shareActions: { flexDirection: 'row', gap: 12, marginTop: 4 },
   shareLoading: { minHeight: 100, alignItems: 'center', justifyContent: 'center', gap: 12 },
