@@ -5,7 +5,7 @@
     "slug": "shoppendo",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/shoppendo-icon-square.png",
     "userInterfaceStyle": "light",
     "scheme": "shoppendo",
     "ios": {
