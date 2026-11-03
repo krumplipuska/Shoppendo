@@ -234,16 +234,26 @@ export function Sheet({ visible, title, children, onClose, onShow, compact = fal
     ]).start();
   };
   const reset = () => NativeAnimated.timing(offset, { toValue: 0, duration: latest.current.reducedMotion ? 0 : 160, useNativeDriver: true }).start();
-  const pan = useRef(PanResponder.create({
-    onMoveShouldSetPanResponderCapture: (_, { dx, dy }) => !closing.current && latest.current.compact && dy > 12 && dy > Math.abs(dx) * 1.5 && (latest.current.canSwipeDown?.() ?? true),
-    onPanResponderGrant: () => offset.stopAnimation(),
-    onPanResponderMove: (_, { dy }) => offset.setValue(Math.max(0, dy)),
-    onPanResponderRelease: (_, { dy, vy }) => {
-      if (backSwipeDirection(0, dy, 0, vy * 1000) === 'down') dismiss.current();
-      else reset();
-    },
-    onPanResponderTerminate: reset,
-  })).current;
+  const [[bodyPan, gripPan]] = useState(() => {
+    const dragHandlers = {
+      onPanResponderGrant: () => offset.stopAnimation(),
+      onPanResponderMove: (_: unknown, { dy }: { dy: number }) => offset.setValue(Math.max(0, dy)),
+      onPanResponderRelease: (_: unknown, { dy, vy }: { dy: number; vy: number }) => {
+        if (backSwipeDirection(0, dy, 0, vy * 1000) === 'down') dismiss.current();
+        else reset();
+      },
+      onPanResponderTerminate: reset,
+    };
+    return [
+      PanResponder.create({ ...dragHandlers,
+        onMoveShouldSetPanResponderCapture: (_, { dx, dy }) => !closing.current && latest.current.compact && dy > 12 && dy > Math.abs(dx) * 1.5 && (latest.current.canSwipeDown?.() ?? true),
+      }),
+      PanResponder.create({ ...dragHandlers,
+        onStartShouldSetPanResponder: () => !closing.current,
+        onPanResponderTerminationRequest: () => false,
+      }),
+    ];
+  });
   useEffect(() => () => { offset.stopAnimation(); dim.stopAnimation(); }, [offset, dim]);
   return <Modal visible={visible} transparent animationType="none" onRequestClose={() => dismiss.current()} onShow={show}>
     <View ref={modalFrame} collapsable={false} style={ui.modalRoot} onLayout={() => modalFrame.current?.measureInWindow((_, y, __, frameHeight) => {
@@ -252,9 +262,9 @@ export function Sheet({ visible, title, children, onClose, onShow, compact = fal
       <NativeAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, ui.backdrop, { opacity: dim }]} />
       <Pressable style={StyleSheet.absoluteFill} onPress={() => dismiss.current()} accessibilityLabel="Close dialog" accessibilityRole="button" />
       <NativeAnimated.View pointerEvents="box-none" style={[ui.sheetPosition, { bottom: keyboardGap }]}>
-        <NativeAnimated.View {...pan.panHandlers} accessibilityViewIsModal style={[ui.sheet, compact && ui.compactSheet, { transform: [{ translateY: offset }] }]}>
+        <NativeAnimated.View {...bodyPan.panHandlers} accessibilityViewIsModal style={[ui.sheet, compact && ui.compactSheet, { transform: [{ translateY: offset }] }]}>
           <View pointerEvents="none" style={[ui.sheetUnderlay, { height }]} />
-          <View style={[ui.grabber, compact && { marginBottom: 0 }]} />
+          <View {...gripPan.panHandlers} collapsable={false} style={ui.gripTarget}><View pointerEvents="none" style={ui.grabber} /></View>
           <View style={ui.sheetHeading}><Text accessibilityRole="header" style={ui.sheetTitle}>{title}</Text><IconButton icon="close" label="Close" onPress={() => dismiss.current()} /></View>
           {children}
         </NativeAnimated.View>
@@ -318,7 +328,8 @@ export const ui = StyleSheet.create({
   sheet: { width: '100%', maxWidth: 520, maxHeight: '90%', backgroundColor: c.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 40, gap: 14 },
   sheetUnderlay: { position: 'absolute', top: '100%', left: 0, right: 0, backgroundColor: c.white },
   compactSheet: { maxHeight: '65%', paddingBottom: 16, gap: 8 },
-  grabber: { width: 40, height: 4, borderRadius: 4, backgroundColor: c.border, alignSelf: 'center', marginBottom: 8 },
+  gripTarget: { height: 36, marginTop: -12, marginBottom: -8, justifyContent: 'center', alignItems: 'center' },
+  grabber: { width: 40, height: 4, borderRadius: 4, backgroundColor: c.border },
   sheetHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
   sheetTitle: { flex: 1, fontFamily: f.bold, fontSize: 23, lineHeight: 30, color: c.text },
 });
