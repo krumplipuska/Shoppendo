@@ -22,7 +22,7 @@ import { shopLink, shopCodeFromLink } from './src/links';
 // (<AnimatedSplash />) is on screen. The copy then animates and fades out once the app is ready.
 void SplashScreen.preventAutoHideAsync().catch(() => {});
 SplashScreen.setOptions({ duration: 0, fade: false });
-const SPLASH_MIN_MS = 1000;
+const SPLASH_MIN_MS = 1500;
 const SPLASH_SIZE = 140; // must match imageWidth of the expo-splash-screen plugin in app.json
 let appReady = false;
 let onAppReady: (() => void) | null = null;
