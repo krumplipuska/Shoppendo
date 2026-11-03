@@ -2,7 +2,7 @@ import { entityTone } from '../src/theme.ts';
 import { deleteSwipeProgress, backSwipeDirection, swipeAxis, keyboardOverlap } from '../src/interaction.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acknowledge, activeItems, decodeSaved, doneItems, doneOverflow, MAX_DONE_ITEMS, edit, emptyState, formatCode, GROUP_ICONS, isGroup, itemSuggestions, listItems, mergeRemote, mergeCategoryOrder, normalizeCode, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, storeInitials, validName } from '../src/model.ts';
+import { acknowledge, activeItems, decodeSaved, doneItems, missingItems, doneOverflow, MAX_DONE_ITEMS, edit, emptyState, formatCode, GROUP_ICONS, isGroup, itemSuggestions, listItems, mergeRemote, mergeCategoryOrder, normalizeCode, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, storeInitials, validName } from '../src/model.ts';
 
 const code = 'ABCDEFGHJKLMNPQRSTUV';
 const item = (name, groupId = 'fruit') => ({ name, groupId, done: false, deleted: false, createdAt: 1, updatedAt: 1 });
@@ -447,4 +447,16 @@ test('installed Drax native and built adapters deliver one terminal event per ac
     }
     assert.deepEqual(calls, ['drop', 'cancel'], path);
   }
+});
+
+test('missing items persist separately and return to their picking order when restored', () => {
+  const marked = edit(state(), write('mark', 'items', 'apple', { missing: true, done: false }));
+  const saved = decodeSaved(JSON.stringify(marked));
+  const store = saved.shops[0];
+  assert.deepEqual(listItems(store).map(([id]) => id), ['loaf']);
+  assert.deepEqual(missingItems(store).map(([id]) => id), ['apple']);
+  assert.deepEqual(doneItems(store), []);
+  const restored = edit(saved, write('restore', 'items', 'apple', { missing: false }));
+  assert.deepEqual(listItems(restored.shops[0]).map(([id]) => id), ['apple', 'loaf']);
+  assert.deepEqual(missingItems(restored.shops[0]), []);
 });

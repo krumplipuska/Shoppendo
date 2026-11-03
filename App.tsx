@@ -9,7 +9,7 @@ import { useFonts } from 'expo-font';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { actions, errorMessage, getShopSnapshot, load, useShops, UNDO_MS } from './src/store';
-import { activeItems, doneItems, formatCode, GROUP_ICONS, itemSuggestions, itemDropSlot, listItems, orderedGroups, mergeCategoryOrder, storeInitials, type GroupIcon, type Item, type Shop } from './src/model';
+import { activeItems, doneItems, missingItems, formatCode, GROUP_ICONS, itemSuggestions, itemDropSlot, listItems, orderedGroups, mergeCategoryOrder, storeInitials, type GroupIcon, type Item, type Shop } from './src/model';
 import { Button, Icon, IconButton, EditingRegion, EditingSurface, useFinishEditing, InlineInput, Sheet, SwipeToDelete, FloatingAddButton, FloatingUndoButton, ui } from './src/ui';
 import { colors as c, fonts as f, entityTone } from './src/theme';
 
@@ -257,8 +257,13 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
   const token = useRef(0);
   const { motion, hover, setLift } = useRowMotion(id, false);
   const drag = useHoldDrag();
+  const missingAction = {
+    icon: item.missing ? 'undo' as const : 'missing' as const,
+    label: item.missing ? `Return ${item.name} to shopping list` : `Mark ${item.name} as missing`,
+    onPress: () => actions.setItemMissing(shop.id, id, !item.missing),
+  };
   const move = (direction: number) => {
-    if (!manualOrder) return;
+    if (!manualOrder || item.missing || item.done) return;
     const ids = activeItems(shop, item.groupId).map(([key]) => key);
     const index = ids.indexOf(id); const to = index + direction;
     if (to < 0 || to >= ids.length) return;
@@ -267,7 +272,7 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
   };
   // Reanimated custom entry cleanup on web pins rows to their initial absolute position.
   return <Animated.View entering={Platform.OS === 'web' ? undefined : FadeInUp.duration(420).withInitialValues({ opacity: 0, transform: [{ translateY: -56 }] }).easing(Easing.out(Easing.cubic)).reduceMotion(ReduceMotion.System)} exiting={item.done ? FadeOutDown.duration(220).reduceMotion(ReduceMotion.System) : fadeOut} collapsable={false}>
-    <DraxView dragHandle snapDelay={0} snapDuration={200} draggable={!item.done && manualOrder} receptive={!item.done && manualOrder} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+    <DraxView dragHandle snapDelay={0} snapDuration={200} draggable={!item.done && !item.missing && manualOrder} receptive={!item.done && !item.missing && manualOrder} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
       renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><ItemDragPreview shop={shop} item={item} /></Animated.View>}
       payload={{ kind: 'item', id, shopId: shop.id } satisfies Drag}
       acceptsDrag={payload => accepts(payload, shop.id, 'item') && payload.id !== id}
@@ -277,7 +282,7 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
       onReceiveDragEnter={preview?.over} onReceiveDragOver={preview?.over} onReceiveDragExit={preview?.exit}
       style={s.itemDrop} draggingStyle={s.itemDragOrigin} dragReleasedStyle={s.itemDragOrigin}
      >
-      <Animated.View style={motion}><SwipeToDelete label={item.name} onDelete={() => actions.deleteItem(shop.id, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
+      <Animated.View style={motion}><SwipeToDelete extraAction={missingAction} label={item.name} onDelete={() => actions.deleteItem(shop.id, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
         <View style={s.item}>
           <DraxHandle style={StyleSheet.absoluteFill}><View style={s.item} pointerEvents="box-none">
           <Pressable accessibilityRole="checkbox" accessibilityLabel={`${item.name}, ${item.done ? 'picked up' : 'to get'}`} accessibilityState={{ checked: item.done }}
@@ -287,8 +292,8 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
           <View pointerEvents="box-none" style={s.itemTextOverlay}>
           <Pressable style={s.itemNameTarget} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}
             accessibilityHint={item.done ? 'Tap to edit. Swipe left to delete.' : manualOrder ? 'Tap to edit. Hold anywhere to drag. Swipe left to delete.' : 'Tap to edit. Choose By group in the shop menu to drag items.'}
-            accessibilityActions={[{ name: 'delete', label: 'Delete item' }, { name: 'increment', label: 'Move item later' }, { name: 'decrement', label: 'Move item earlier' }]}
-            onAccessibilityAction={event => { const name = event.nativeEvent.actionName; if (name === 'delete') actions.deleteItem(shop.id, id); else move(name === 'increment' ? 1 : -1); }}
+            accessibilityActions={[{ name: 'missing', label: missingAction.label }, { name: 'delete', label: 'Delete item' }, { name: 'increment', label: 'Move item later' }, { name: 'decrement', label: 'Move item earlier' }]}
+            onAccessibilityAction={event => { const name = event.nativeEvent.actionName; if (name === 'missing') missingAction.onPress(); else if (name === 'delete') actions.deleteItem(shop.id, id); else move(name === 'increment' ? 1 : -1); }}
             onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp', 'ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}
             onPress={() => { if (!drag.held.current) editItem(id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY}>
             <Text style={[s.itemName, item.done && s.doneName]}>{item.name}</Text>
@@ -355,7 +360,7 @@ function StoreRow({ shop, shops, open, share }: { shop: Shop; shops: Shop[]; ope
   const preview = useContext(ItemDragContext);
   const token = useRef(0);
   const { motion, hover, setLift } = useRowMotion(shop.id);
-  const count = Object.values(shop.items).filter(item => !item.deleted && !item.done && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted).length;
+  const count = Object.values(shop.items).filter(item => !item.deleted && !item.done && !item.missing && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted).length;
   const details = <Text style={s.caption}>{count} {count === 1 ? 'item' : 'items'}</Text>;
   const move = (direction: number) => {
     const order = shops.map(s => s.id); const from = order.indexOf(shop.id); const to = from + direction;
@@ -735,6 +740,7 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
   // Persist checks immediately; delay only their visual move so navigating away cannot lose one.
   const displayShop = checking.size ? { ...shop, items: Object.fromEntries(Object.entries(shop.items).map(([id, item]) => [id, checking.has(id) ? { ...item, done: false } : item])) } : shop;
   const groups = orderedGroups(shop);
+  const missing = missingItems(shop);
   const picked = doneItems(shop).filter(([id]) => !checking.has(id));
   const flatItems = listItems(displayShop, itemSort);
   const itemDrag = useListDrag(itemSort === 'group' ? listItems(shop).map(([id]) => id) : [], chosen => {
@@ -803,12 +809,13 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
       <View>
         <View style={flatItems.length ? s.itemPanel : undefined}>{flatItems.map(([id]) => <ItemRow key={id} shop={shop} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={() => toggle(id)} />)}</View>
         {!flatItems.length && groups.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="Add an item to the list" style={s.emptyList} onPress={() => setTopAdding(true)}>
-          <Icon name="bag" size={28} /><Text style={s.caption}>{picked.length ? 'Nothing left to pick up' : 'Add your first item'}</Text>
+          <Icon name="bag" size={28} /><Text style={s.caption}>{picked.length || missing.length ? 'Nothing left to pick up' : 'Add your first item'}</Text>
         </Pressable>}
       </View>
       {!groups.length && <View style={s.noGroups}><Text style={s.emptyTitle}>Start with a category</Text><Text style={s.caption}>Open Categories to create your first category.</Text></View>}
       <ListTail shopId={shop.id} kind="item" last={flatItems.at(-1)?.[0]} />
       <View>
+        {missing.length > 0 && <View style={s.doneSection}><Text style={s.doneLabel}>Missing</Text>{missing.map(([id, item]) => <ItemRow key={id} shop={shop} id={id} item={item} showCategory manualOrder={false} toggle={() => toggle(id)} />)}</View>}
         {completed.length > 0 && <View style={s.doneSection}><Text style={s.doneLabel}>Done</Text>{completed.map(([id]) => <ItemRow key={id} shop={shop} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={() => toggle(id)} />)}</View>}
       </View>
     </ShopScroll></View></GestureDetector></ItemDragContext.Provider></ItemEditorContext.Provider>

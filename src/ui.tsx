@@ -8,7 +8,7 @@ import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-worklets';
 import Animated, { Easing as MotionEasing, FadeIn, FadeOut, ReduceMotion, useReducedMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
 
-export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'copy' | 'close' | 'trash' | 'undo' | 'more' | 'groupSort' | 'categories' | 'grip' | GroupIcon;
+export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'copy' | 'close' | 'trash' | 'missing' | 'undo' | 'more' | 'groupSort' | 'categories' | 'grip' | GroupIcon;
 export type InputHandle = React.ComponentRef<typeof TextInput>;
 type Dismiss = () => void | boolean;
 const EditingContext = createContext<Map<symbol, Dismiss> | null>(null);
@@ -52,6 +52,7 @@ export function useFinishEditing() {
 }
 const paths: Record<Exclude<IconName, 'more'>, string> = {
   copy: 'M9 9h12v12H9V9ZM5 15H3V3h12v2',
+  missing: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM6 18 18 6',
   trash: 'M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7',
   groupSort: 'M4 5v14m-3-3 3 3 3-3M10 5h11M10 12h8M10 19h5',
   categories: 'M2 21h11a3 3 0 0 0 0-6H6a3 3 0 0 1 0-6h4m-2-2 2 2-2 2M12 3h2l2 8h5l2-6h-8M17 14h.01M21 14h.01',
@@ -101,8 +102,9 @@ export function Icon({ name, color = c.primary, size = 22, solid = false }: { na
   </Svg>;
 }
 
-export function SwipeToDelete({ children, label, onDelete, disabled = false, onSwipeStart, onSwipeEnd, activeOffsetX = 14, failOffsetY = 12, touchAction = 'pan-y' }: {
+export function SwipeToDelete({ children, label, onDelete, extraAction, disabled = false, onSwipeStart, onSwipeEnd, activeOffsetX = 14, failOffsetY = 12, touchAction = 'pan-y' }: {
   children: (action: (normal?: React.ReactNode, style?: StyleProp<ViewStyle>) => React.ReactNode) => React.ReactNode; label: string; onDelete: () => void;
+  extraAction?: { icon: IconName; label: string; onPress: () => void };
   disabled?: boolean; onSwipeStart?: () => void; onSwipeEnd?: () => void; activeOffsetX?: number; failOffsetY?: number; touchAction?: 'pan-x' | 'pan-y' | 'none';
 }) {
   const [open, setOpen] = useState(false);
@@ -125,10 +127,11 @@ export function SwipeToDelete({ children, label, onDelete, disabled = false, onS
   });
   const normalStyle = useAnimatedStyle(() => ({ opacity: 1 - progress.value }));
   const deleteStyle = useAnimatedStyle(() => ({ opacity: progress.value, transform: [{ scale: 0.85 + progress.value * 0.15 }] }));
-  const action = (normal?: React.ReactNode, style?: StyleProp<ViewStyle>) => <View style={[ui.actionSlot, style]}>
+  const action = (normal?: React.ReactNode, style?: StyleProp<ViewStyle>) => <View style={[ui.actionSlot, style, visible && extraAction && { minWidth: 96 }]}>
     <Animated.View style={normalStyle} pointerEvents={open ? 'none' : 'auto'} accessibilityElementsHidden={open} importantForAccessibility={open ? 'no-hide-descendants' : 'auto'} aria-hidden={open}>{normal}</Animated.View>
     <Animated.View style={[StyleSheet.absoluteFill, { alignItems: 'flex-end', justifyContent: 'center' }, deleteStyle]} pointerEvents={open ? 'auto' : 'none'} accessibilityElementsHidden={!open} importantForAccessibility={open ? 'auto' : 'no-hide-descendants'} aria-hidden={!open}>
-      <EditingRegion onDismiss={visible ? reset : undefined}>
+      <EditingRegion style={{ flexDirection: 'row', gap: 8 }} onDismiss={visible ? reset : undefined}>
+        {extraAction && <IconButton icon={extraAction.icon} filled color={c.primary} label={extraAction.label} disabled={!open} onPress={() => { reset(); extraAction.onPress(); }} />}
         <IconButton icon="trash" filled color={c.danger} disabled={!open} label={`Delete ${label}`} onPress={() => { reset(); onDelete(); }} />
       </EditingRegion>
     </Animated.View>

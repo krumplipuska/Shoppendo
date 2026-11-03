@@ -246,8 +246,13 @@ export const actions = {
     const item = saved.shops.find(s => s.id === shopId)?.items[itemId];
     if (!item || item.deleted) return;
     const done = !item.done;
-    update({ shopId, target: 'items', entityId: itemId, data: { done, updatedAt: Date.now() } });
+    update({ shopId, target: 'items', entityId: itemId, data: { done, missing: false, updatedAt: Date.now() } });
     return done;
+  },
+  setItemMissing(shopId: string, itemId: string, missing: boolean) {
+    const item = saved.shops.find(s => s.id === shopId)?.items[itemId];
+    if (!item || item.deleted) return;
+    update({ shopId, target: 'items', entityId: itemId, data: { missing, done: false, updatedAt: Date.now() } });
   },
   renameItem(shopId: string, itemId: string, input: string) {
     const name = validName(input);

@@ -10,6 +10,7 @@ export type Item = {
   name: string;
   groupId: string;
   done: boolean;
+  missing?: boolean;
   deleted: boolean;
   createdAt: number;
   updatedAt: number;
@@ -127,7 +128,7 @@ export function reorderShops(shops: Shop[], order: string[]) {
 
 export function activeItems(shop: Shop, groupId: string, sort: ItemSort = 'group') {
   return Object.entries(shop.items)
-    .filter(([, item]) => item.groupId === groupId && !shop.groups[groupId]?.deleted && !item.done && !item.deleted)
+    .filter(([, item]) => item.groupId === groupId && !shop.groups[groupId]?.deleted && !item.done && !item.missing && !item.deleted)
     .sort(([a, x], [b, y]) => (sort === 'name' ? x.name.localeCompare(y.name, undefined, { sensitivity: 'base', numeric: true }) : sort === 'added' ? x.createdAt - y.createdAt : (x.position ?? x.createdAt) - (y.position ?? y.createdAt)) || a.localeCompare(b));
 }
 
@@ -168,7 +169,7 @@ export function itemSuggestions(shops: Shop[], shop: Shop, query: string) {
 // A move usually needs only one item patch.
 export function itemDropSlot(shop: Shop, source: string, target: string, after: boolean) {
   const item = shop.items[source], receiver = shop.items[target];
-  if (source === target || !item || item.deleted || item.done || !receiver || receiver.deleted || receiver.done) return null;
+  if (source === target || !item || item.deleted || item.missing || item.done || !receiver || receiver.deleted || receiver.missing || receiver.done) return null;
   if (![item.groupId, receiver.groupId].every(id => shop.groups[id] && !shop.groups[id].deleted)) return null;
   const ids = activeItems(shop, receiver.groupId).map(([id]) => id);
   const without = ids.filter(id => id !== source);
@@ -179,7 +180,7 @@ export function itemDropSlot(shop: Shop, source: string, target: string, after: 
 
 export function planItemMove(shop: Shop, itemId: string, groupId: string, beforeId: string | null = null, allowCompleted = false) {
   const item = shop.items[itemId];
-  if (!shop.groups[groupId] || shop.groups[groupId].deleted || !item || shop.groups[item.groupId]?.deleted || (item.done && !allowCompleted) || item.deleted || beforeId === itemId) return {};
+  if (!shop.groups[groupId] || shop.groups[groupId].deleted || !item || shop.groups[item.groupId]?.deleted || ((item.done || item.missing) && !allowCompleted) || item.deleted || beforeId === itemId) return {};
   const items = activeItems(shop, groupId).filter(([id]) => id !== itemId);
   const index = beforeId === null ? items.length : items.findIndex(([id]) => id === beforeId);
   if (index < 0) return {};
@@ -202,13 +203,19 @@ export function storeInitials(name: string) {
 
 export const MAX_DONE_ITEMS = 100;
 export function doneOverflow(shop: Shop) {
-  return Object.entries(shop.items).filter(([, item]) => item.done && !item.deleted)
+  return Object.entries(shop.items).filter(([, item]) => item.done && !item.missing && !item.deleted)
     .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b)).slice(MAX_DONE_ITEMS).map(([id]) => id);
+}
+
+export function missingItems(shop: Shop) {
+  return Object.entries(shop.items)
+    .filter(([, item]) => item.missing && !item.deleted && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted)
+    .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b));
 }
 
 export function doneItems(shop: Shop) {
   return Object.entries(shop.items)
-    .filter(([, item]) => item.done && !item.deleted && !shop.groups[item.groupId]?.deleted)
+    .filter(([, item]) => item.done && !item.missing && !item.deleted && !shop.groups[item.groupId]?.deleted)
     .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b)).slice(0, MAX_DONE_ITEMS);
 }
 
@@ -223,7 +230,7 @@ export function isItem(value: unknown): value is Item {
   if (!value || typeof value !== 'object') return false;
   const v = value as Item;
   return typeof v.name === 'string' && v.name.trim().length > 0 && v.name.length <= 200
-    && typeof v.groupId === 'string' && typeof v.done === 'boolean' && typeof v.deleted === 'boolean'
+    && typeof v.groupId === 'string' && typeof v.done === 'boolean' && (v.missing === undefined || typeof v.missing === 'boolean') && typeof v.deleted === 'boolean'
     && Number.isFinite(v.createdAt) && Number.isFinite(v.updatedAt)
     && (v.position === undefined || Number.isFinite(v.position));
 }
