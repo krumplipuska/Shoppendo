@@ -6,6 +6,7 @@ import { GestureDetector, GestureHandlerRootView, GestureStateManager, ScrollVie
 import { DraxProvider, DraxView, DraxHandle, DraxScrollView, DraxSnapbackTargetPreset, type DraxRenderHoverContentProps, type DraxViewMeasurements, type DraxDragEventData, type DraxDragWithReceiverEventData } from 'react-native-drax';
 import Animated, { FadeIn, FadeInUp, FadeInDown, FadeOut, FadeOutDown, ZoomIn, SlideInDown, Easing, ReduceMotion, useSharedValue, useAnimatedStyle, cancelAnimation, withDelay, withTiming } from 'react-native-reanimated';
 import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { actions, errorMessage, getShopSnapshot, load, useShops, UNDO_MS } from './src/store';
@@ -16,6 +17,22 @@ import { colors as c, fonts as f, entityTone } from './src/theme';
 import { runOnJS } from 'react-native-worklets';
 import { backSwipeDirection, swipeAxis, dragSession, insertionSide, itemDragLayout, dragSlotTop, dragOrder, shouldStartListPull } from './src/interaction';
 import { shopLink, shopCodeFromLink } from './src/links';
+
+// Keep the native launch splash on screen until fonts and stores are ready, then fade it out.
+void SplashScreen.preventAutoHideAsync().catch(() => {});
+SplashScreen.setOptions({ duration: 300, fade: true });
+const SPLASH_MIN_MS = 1000;
+const splashShownAt = Date.now();
+let splashHidden = false;
+function hideSplash() {
+  if (splashHidden) return;
+  splashHidden = true;
+  // Keep the splash visible for at least SPLASH_MIN_MS, then fade it out.
+  const wait = Math.max(0, SPLASH_MIN_MS - (Date.now() - splashShownAt));
+  setTimeout(() => { void SplashScreen.hideAsync().catch(() => {}); }, wait);
+}
+// Never leave the user stuck on the splash if loading hangs.
+setTimeout(hideSplash, 8000);
 
 type Drag = { kind: 'item' | 'group' | 'store'; id: string; shopId: string };
 function accepts(payload: unknown, shopId: string, kind?: Drag['kind']): payload is Drag {
@@ -849,6 +866,7 @@ function Main() {
   const [linkError, setLinkError] = useState('');
   const shop = data.shops.find(s => s.id === selected);
   useEffect(() => { void load(); }, []);
+  useEffect(() => { if (ready || error) hideSplash(); }, [ready, error]);
   useEffect(() => {
     const receive = (url: string | null | undefined) => {
       const code = url && shopCodeFromLink(url);
