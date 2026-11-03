@@ -7,8 +7,9 @@ import { acknowledge, CODE_ALPHABET, decodeSaved, edit, emptyState, mergeRemote,
 import { firebaseConfigured, joinRemote, publishShop, sendWrites, watchShop, stopSharing } from './firebase';
 
 const STORAGE_KEY = 'shoppendo.v1';
+export const UNDO_MS = 3000;
 let saved = emptyState();
-let view = { data: saved, ready: false, error: '', syncing: false, undo: null as { label: string; restore: () => void } | null };
+let view = { data: saved, ready: false, error: '', syncing: false, undo: null as { label: string; restore: () => void; startedAt: number } | null };
 let undoTimer: ReturnType<typeof setTimeout> | undefined;
 const listeners = new Set<() => void>();
 let saveChain: Promise<void> = Promise.resolve();
@@ -28,8 +29,8 @@ function notify(update: Partial<typeof view> = {}) {
 
 function offerUndo(label: string, restore: () => void) {
   clearTimeout(undoTimer);
-  notify({ undo: { label, restore } });
-  undoTimer = setTimeout(() => notify({ undo: null }), 8000);
+  notify({ undo: { label, restore, startedAt: Date.now() } });
+  undoTimer = setTimeout(() => notify({ undo: null }), UNDO_MS);
 }
 
 export function errorMessage(error: unknown) {

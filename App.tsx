@@ -8,9 +8,9 @@ import Animated, { FadeIn, FadeInUp, FadeInDown, FadeOut, FadeOutDown, ZoomIn, S
 import { useFonts } from 'expo-font';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { actions, errorMessage, getShopSnapshot, load, useShops } from './src/store';
+import { actions, errorMessage, getShopSnapshot, load, useShops, UNDO_MS } from './src/store';
 import { activeItems, doneItems, formatCode, GROUP_ICONS, itemSuggestions, itemDropSlot, listItems, orderedGroups, mergeCategoryOrder, storeInitials, type GroupIcon, type Item, type Shop } from './src/model';
-import { Button, Icon, IconButton, EditingRegion, EditingSurface, useFinishEditing, InlineInput, Sheet, SwipeToDelete, FloatingAddButton, ui } from './src/ui';
+import { Button, Icon, IconButton, EditingRegion, EditingSurface, useFinishEditing, InlineInput, Sheet, SwipeToDelete, FloatingAddButton, FloatingUndoButton, ui } from './src/ui';
 import { colors as c, fonts as f, entityTone } from './src/theme';
 
 import { runOnJS } from 'react-native-worklets';
@@ -45,7 +45,7 @@ function useHoldDrag() {
   return { held, active, start, stop, suppress };
 }
 
-function ShopScroll({ page, children }: { page: ReturnType<typeof usePageBack>; children: React.ReactNode }) {
+function ShopScroll({ page, children, horizontalPadding = 20 }: { page: ReturnType<typeof usePageBack>; children: React.ReactNode; horizontalPadding?: number }) {
   const ref = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const offset = useSharedValue({ x: 0, y: 0 });
   const size = useRef({ viewport: 0, content: 0, y: 0 });
@@ -66,7 +66,7 @@ function ShopScroll({ page, children }: { page: ReturnType<typeof usePageBack>; 
       }, 32);
     }}>
     <GestureScrollView ref={ref} simultaneousWith={page.body} disallowInterruption={false} style={s.flex}
-      contentContainerStyle={s.listContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false}
+      contentContainerStyle={[s.listContent, { paddingHorizontal: horizontalPadding }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false}
       scrollEnabled={!dragging} scrollEventThrottle={16} onLayout={event => { size.current.viewport = event.nativeEvent.layout.height; }}
       onContentSizeChange={(_, height) => { size.current.content = height; }}
       onScroll={event => { const y = event.nativeEvent.contentOffset.y; size.current.y = y; offset.value = { x: 0, y }; page.scrollY.value = y; }}>
@@ -274,29 +274,28 @@ function ItemRow({ shop, id, item, toggle, showCategory = false, manualOrder = t
      >
       <Animated.View style={motion}><SwipeToDelete label={item.name} onDelete={() => actions.deleteItem(shop.id, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
         <View style={s.item}>
-          <DraxHandle style={StyleSheet.absoluteFill}><View style={s.item}>
+          <DraxHandle style={StyleSheet.absoluteFill}><View style={s.item} pointerEvents="box-none">
           <Pressable accessibilityRole="checkbox" accessibilityLabel={`${item.name}, ${item.done ? 'picked up' : 'to get'}`} accessibilityState={{ checked: item.done }}
-            onPress={() => { if (!drag.held.current) toggle(); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} style={s.checkboxTarget}>
+            onPress={() => { if (!drag.held.current) toggle(); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} style={[s.checkboxTarget, { position: 'absolute', left: 0, top: 0, bottom: 0 }]}>
             <View style={[s.checkbox, item.done && s.checked]}>{item.done && <Animated.View entering={ZoomIn.duration(160).reduceMotion(ReduceMotion.System)}><Icon name="check" size={15} color={c.white} /></Animated.View>}</View>
           </Pressable>
-          <View style={s.flex} pointerEvents="none" />
-          </View></DraxHandle>
-          <View pointerEvents="none" style={s.itemDivider} />
           <View pointerEvents="box-none" style={s.itemTextOverlay}>
-          <View pointerEvents="box-none" style={s.flex}><Pressable style={s.itemNameTarget} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}
-            accessibilityHint={item.done ? 'Tap to rename. Swipe left to delete.' : manualOrder ? 'Tap the text to edit. Hold elsewhere on the row to move. Swipe left to delete.' : 'Tap to edit. Choose By group in the shop menu to drag items.'}
+          <Pressable style={s.itemNameTarget} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}
+            accessibilityHint={item.done ? 'Tap to edit. Swipe left to delete.' : manualOrder ? 'Tap to edit. Hold anywhere to drag. Swipe left to delete.' : 'Tap to edit. Choose By group in the shop menu to drag items.'}
             accessibilityActions={[{ name: 'delete', label: 'Delete item' }, { name: 'increment', label: 'Move item later' }, { name: 'decrement', label: 'Move item earlier' }]}
             onAccessibilityAction={event => { const name = event.nativeEvent.actionName; if (name === 'delete') actions.deleteItem(shop.id, id); else move(name === 'increment' ? 1 : -1); }}
             onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp', 'ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}
             onPress={() => { if (!drag.held.current) editItem(id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY}>
             <Text style={[s.itemName, item.done && s.doneName]}>{item.name}</Text>
-          </Pressable></View>
+          </Pressable>
           {action(showCategory && <Pressable accessibilityRole="button" accessibilityLabel={`Change category for ${item.name}`}
             accessibilityHint={`Current category: ${shop.groups[item.groupId]?.name ?? 'Unknown'}`} style={{ minHeight: 60, justifyContent: 'center' }}
             onPress={() => { if (!drag.held.current) editItem(id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY}>
             <ItemCategory shop={shop} groupId={item.groupId} />
           </Pressable>, s.itemCategoryAction)}
           </View>
+          </View></DraxHandle>
+          <View pointerEvents="none" style={s.itemDivider} />
         </View>}
       </SwipeToDelete></Animated.View>
     </DraxView>
@@ -377,10 +376,8 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
   const preview = useContext(ItemDragContext);
   const token = useRef(0);
   const { motion, hover, setLift } = useRowMotion(shop.id);
-  const groups = orderedGroups(shop);
   const count = Object.values(shop.items).filter(item => !item.deleted && !item.done && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted).length;
-  const pickingOrder = groups.slice(0, 3).map(id => shop.groups[id].name).join(' → ') || 'No categories yet';
-  const details = <><Text style={s.caption}>{count} {count === 1 ? 'item' : 'items'}</Text><Text numberOfLines={1} style={s.caption}>{pickingOrder}</Text></>;
+  const details = <Text style={s.caption}>{count} {count === 1 ? 'item' : 'items'}</Text>;
   const move = (direction: number) => {
     const order = shops.map(s => s.id); const from = order.indexOf(shop.id); const to = from + direction;
     if (to < 0 || to >= order.length) return;
@@ -394,12 +391,13 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
           <Handle style={StyleSheet.absoluteFill}><View style={s.storeDragArea} pointerEvents="box-none">
             <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel={`Open ${shop.name} row`}
               onPress={() => { if (!drag.held.current) open(shop.id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} />
-            <View pointerEvents="none" style={[s.storeBadge, { marginTop: 13 }]}><Text style={[s.storeInitials, { color: c.primary }]}>{storeInitials(shop.name)}</Text></View>
+            <View pointerEvents="none" style={s.storeBadge}><Text style={[s.storeInitials, { color: c.primary }]}>{storeInitials(shop.name)}</Text></View>
             <View pointerEvents="none" style={s.flex} />
+            {shop.shared && <IconButton icon="share" color={c.primary} label={`Share ${shop.name}, shared store`} onPress={() => { if (!drag.held.current) share(); }} />}
             {renderAction(<IconButton icon="right" color={c.primary} label={`Open ${shop.name}`} onPress={() => { if (!drag.held.current) open(shop.id); }} />)}
           </View></Handle>
           <View pointerEvents="box-none" style={s.storeTextOverlay}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Open ${shop.name} store, ${count} items, ${pickingOrder}`} style={[s.nameTouch, { marginRight: shop.shared ? 88 : 44 }]}
+            <Pressable accessibilityRole="button" accessibilityLabel={`Open ${shop.name} store, ${count} ${count === 1 ? 'item' : 'items'}`} style={[s.nameTouch, { marginRight: shop.shared ? 88 : 44 }]}
               onPress={() => { if (!drag.held.current) open(shop.id); }} onLongPress={() => { if (!drag.held.current) edit(); }} delayLongPress={DRAG_DELAY}
               accessibilityHint="Hold the name to rename. Hold elsewhere on the row to drag. Swipe left to remove."
               accessibilityActions={[{ name: 'edit', label: 'Rename store' }, { name: 'delete', label: 'Remove store' }, { name: 'increment', label: 'Move store later' }, { name: 'decrement', label: 'Move store earlier' }]}
@@ -409,7 +407,6 @@ function StoreRow({ shop, shops, open, share, edit, editing, close }: { shop: Sh
             </Pressable>
             <View pointerEvents="none">{details}</View>
           </View>
-          {shop.shared && <IconButton icon="share" color={c.primary} label={`Share ${shop.name}, shared store`} style={s.storeShareButton} onPress={() => { if (!drag.held.current) share(); }} />}
         </View>
     );
   };
@@ -533,22 +530,34 @@ function ItemArrival({ shop, item, close, start, end }: { shop: Shop; item: { na
 }
 
 function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: string[]; change: (order: string[]) => void; close: () => void }) {
+  const [editor, setEditor] = useState<string | null>(null);
   const order = mergeCategoryOrder(orderedGroups(shop), draft);
   const dragList = useListDrag(order, chosen => { const next = dragOrder(order, chosen); if (next !== order) change(next); });
-  return <ItemDragContext.Provider value={dragList}><View style={s.categoryOrderPage}>
-    <Text accessibilityRole="header" style={s.title}>Picking order</Text>
-    <Text style={s.homeSubtitle}>Drag categories to match your route.</Text>
-    <DraxView style={s.flex} draggable={false} receptive={false} onMeasure={dragList.measureViewport}><DraxScrollView style={s.flex} contentContainerStyle={{ paddingTop: 12, paddingBottom: 20, flexGrow: 1 }} bounces={false}>
-      <Text style={s.orderStoreLabel}>For {shop.name}</Text>
-      <View style={{ gap: 8 }}>{order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} />)}</View>
+  const page = usePageBack(close, !dragList.dragging && !editor);
+  return <ItemDragContext.Provider value={dragList}><GestureDetector gesture={page.edge} touchAction="pan-y"><Animated.View style={[s.flex, s.shopPage, page.style]}>
+    <View style={s.listHeader}><GestureDetector gesture={page.header} touchAction="none"><View style={s.pageHeader}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Back to ${shop.name}`} onPress={page.close} style={s.headerBack}>
+        <Icon name="back" />
+      </Pressable>
+      <View style={s.headerCopy}>
+        <Text accessibilityRole="header" style={s.title}>Categories</Text>
+        <Text style={s.caption}>Change picking order</Text>
+      </View>
+    </View></GestureDetector>
+    </View>
+    <GestureDetector gesture={page.body} touchAction="pan-y"><View style={s.categoryOrderPage}>
+    <ShopScroll page={page} horizontalPadding={0}>
+      <View style={{ gap: 8 }}>{order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} edit={() => setEditor(id)} />)}</View>
       <ListTail shopId={shop.id} kind="group" last={order.at(-1)} />
-    </DraxScrollView></DraxView>
-    <Text style={s.caption}>Each store keeps its own order.</Text>
-    <Button label="Done" onPress={close} />
-  </View></ItemDragContext.Provider>;
+      {!order.length && <Text style={s.caption}>Add your first category to organize this store.</Text>}
+    </ShopScroll>
+    </View></GestureDetector>
+    {!editor && <FloatingAddButton label="Add category" onPress={() => setEditor('new')} />}
+    {editor && (editor === 'new' || order.includes(editor)) && <NewCategory key={editor} shop={shop} editingId={editor === 'new' ? undefined : editor} created={() => {}} close={() => setEditor(null)} />}
+  </Animated.View></GestureDetector></ItemDragContext.Provider>;
 }
 
-function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string; order: string[]; change: (order: string[]) => void }) {
+function CategoryOrderRow({ shop, id, order, change, edit }: { shop: Shop; id: string; order: string[]; change: (order: string[]) => void; edit: () => void }) {
   const drag = useHoldDrag();
   const preview = useContext(ItemDragContext);
   const token = useRef(0);
@@ -560,53 +569,61 @@ function CategoryOrderRow({ shop, id, order, change }: { shop: Shop; id: string;
     if (to < 0 || to >= order.length) return;
     const next = [...order]; [next[index], next[to]] = [next[to], next[index]]; change(next);
   };
+  const grip = <View accessible={false} style={s.orderGrip}>{[0, 1, 2, 3, 4, 5].map(dot => <View key={dot} style={s.gripDot} />)}</View>;
+  const gripSlot = { height: 40, justifyContent: 'center' as const, alignItems: 'center' as const };
   const content = <>
-    <View style={s.orderNumber}><Text style={s.caption}>{String(order.indexOf(id) + 1).padStart(2, '0')}</Text></View>
     <View style={[s.orderIcon, { backgroundColor: tone.soft }]}><Icon name={group.icon ?? 'bag'} color={tone.color} /></View>
     <Text style={[s.groupName, s.flex]}>{group.name}</Text>
-    <View accessible={false} style={s.orderGrip}>{[0, 1, 2, 3, 4, 5].map(dot => <View key={dot} style={s.gripDot} />)}</View>
   </>;
-  return <Animated.View><DraxView snapDelay={0} snapDuration={200} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
-    renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={[s.categoryOrderRow, s.liftedCard]}>{content}</View></Animated.View>}
+  return <Animated.View collapsable={false}><DraxView dragHandle snapDelay={0} snapDuration={0} style={s.dropTarget} longPressDelay={DRAG_DELAY} dragActivationFailOffset={12}
+    renderHoverContent={props => <Animated.View pointerEvents="none" style={[s.dragging, hoverFrame(props), hover]}><View style={[s.categoryOrderRow, s.liftedCard]}><View style={s.categoryRowInner}>{content}<View style={gripSlot}>{grip}</View></View></View></Animated.View>}
       payload={{ kind: 'group', id, shopId: shop.id } satisfies Drag} acceptsDrag={payload => accepts(payload, shop.id, 'group') && payload.id !== id}
     onDragStart={event => { drag.start(); setLift(true); token.current = preview?.start(id, event) ?? 0; }}
-      onDragEnd={event => { drag.stop(); setLift(false); return preview?.release(token.current, event, event.cancelled); }}
-    onDragDrop={event => { drag.stop(); setLift(false); return preview?.release(token.current, event, false); }} onSnapEnd={() => trace(token.current, 'snap complete')}
+      onDragEnd={event => { drag.stop(); setLift(false); preview?.release(token.current, event, event.cancelled); return DraxSnapbackTargetPreset.None; }}
+    onDragDrop={event => { drag.stop(); setLift(false); preview?.release(token.current, event, false); return DraxSnapbackTargetPreset.None; }} onSnapEnd={() => trace(token.current, 'snap complete')}
     onReceiveDragEnter={preview?.over} onReceiveDragOver={preview?.over} onReceiveDragExit={preview?.exit}
     draggingStyle={s.itemDragOrigin} dragReleasedStyle={s.itemDragOrigin}>
-    <Animated.View style={motion}><Pressable style={s.categoryOrderRow} accessibilityRole="button" accessibilityLabel={`${group.name} category order`} accessibilityHint="Hold anywhere to drag. Alt+Up or Alt+Down also moves the category."
-      accessibilityActions={[{ name: 'increment', label: 'Move later' }, { name: 'decrement', label: 'Move earlier' }]}
-      onAccessibilityAction={event => move(event.nativeEvent.actionName === 'increment' ? 1 : -1)}
-      onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp','ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}
-      onLongPress={() => {}} delayLongPress={DRAG_DELAY}>{content}</Pressable></Animated.View>
+    <Animated.View style={motion}><SwipeToDelete label={group.name} onDelete={() => actions.deleteGroup(shop.id, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop} activeOffsetX={8} failOffsetY={32} touchAction="pan-x">{action =>
+      <View style={s.categoryOrderRow}><DraxHandle style={StyleSheet.absoluteFill}><View style={s.categoryRowInner} pointerEvents="box-none">
+        <Pressable style={{ flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 42, gap: 12 }} accessibilityRole="button" accessibilityLabel={`Edit ${group.name} category`} accessibilityHint="Tap to edit. Hold anywhere to drag. Swipe left to delete. Alt+Up or Alt+Down also moves the category."
+          onPress={() => { if (!drag.held.current) edit(); }}
+          accessibilityActions={[{ name: 'delete', label: 'Delete category' }, { name: 'increment', label: 'Move later' }, { name: 'decrement', label: 'Move earlier' }]}
+          onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'delete') actions.deleteGroup(shop.id, id); else move(event.nativeEvent.actionName === 'increment' ? 1 : -1); }}
+          onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp','ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}
+          onLongPress={() => {}} delayLongPress={DRAG_DELAY}>{content}</Pressable>
+        {action(grip, gripSlot)}
+      </View></DraxHandle></View>}
+    </SwipeToDelete></Animated.View>
   </DraxView></Animated.View>;
 }
 
-function NewCategory({ shop, created, close, embedded = false, scrollOffset }: {
-  shop: Shop; created: (id: string) => void; close: () => void; embedded?: boolean; scrollOffset?: React.RefObject<number>;
+function NewCategory({ shop, created, close, embedded = false, scrollOffset, editingId }: {
+  shop: Shop; created: (id: string) => void; close: () => void; embedded?: boolean; scrollOffset?: React.RefObject<number>; editingId?: string;
 }) {
   const input = useRef<React.ComponentRef<typeof TextInput>>(null);
   const focusInput = useCallback(() => { requestAnimationFrame(() => input.current?.focus()); }, []);
   const ownScroll = useRef(0); const scrollY = scrollOffset ?? ownScroll;
-  const [name, setName] = useState('');
-  const [icon, setIcon] = useState<GroupIcon>('bag');
+  const editing = editingId ? shop.groups[editingId] : undefined;
+  const [name, setName] = useState(editing?.name ?? '');
+  const [icon, setIcon] = useState<GroupIcon>(editing?.icon ?? 'bag');
   const finish = () => { if (!embedded) Keyboard.dismiss(); close(); };
   const save = (value: string) => {
+    if (editingId) { actions.editGroup(shop.id, editingId, value, icon); finish(); return; }
     const id = actions.addGroup(shop.id, value); actions.editGroup(shop.id, id, value, icon); created(id); finish();
   };
   const form = <EditingRegion style={{ flexShrink: 1 }}>
     <ScrollView style={{ maxHeight: 260, flexShrink: 1 }} keyboardShouldPersistTaps="handled" bounces={false}
       onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16}>
-      <View style={s.composerInput}><InlineInput inputRef={input} label="New category name" placeholder="Category name" value={name} onValueChange={setName} onAdd={save}
-        autoFocus={embedded} keepOpen={false} submitLabel="Create category" maxLength={80} /></View>
+      <View style={s.composerInput}><InlineInput inputRef={input} label={editingId ? 'Category name' : 'New category name'} placeholder="Category name" value={name} onValueChange={setName} onAdd={save}
+        autoFocus={embedded} keepOpen={false} submitLabel={editingId ? 'Save category' : 'Create category'} maxLength={80} /></View>
       <View style={s.iconGrid}>{GROUP_ICONS.map(option => <Pressable key={option} accessibilityRole="radio" accessibilityLabel={`${option} icon`}
         accessibilityState={{ checked: icon === option, selected: icon === option }} onPress={() => setIcon(option)} style={[s.iconChoice, icon === option && s.selectedIcon]}>
         <Icon name={option} size={24} />{icon === option && <View style={s.selectionBadge}><Icon name="check" color={c.white} size={13} /></View>}
       </Pressable>)}</View>
-      <Pressable accessibilityRole="button" accessibilityLabel="Cancel creating category" onPress={finish} style={s.textButton}><Text style={s.link}>Cancel</Text></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={editingId ? 'Cancel editing category' : 'Cancel creating category'} onPress={finish} style={s.textButton}><Text style={s.link}>Cancel</Text></Pressable>
     </ScrollView>
   </EditingRegion>;
-  return embedded ? form : <Sheet visible compact title="Add category" canSwipeDown={() => scrollY.current <= 1} onShow={focusInput}
+  return embedded ? form : <Sheet visible compact title={editingId ? 'Edit category' : 'Add category'} canSwipeDown={() => scrollY.current <= 1} onShow={focusInput}
     onClose={finish}>{form}</Sheet>;
 }
 
@@ -622,13 +639,9 @@ function AddItem({ shop, close, initialCategory, editingId, onAdded }: { shop: S
   const [query, setQuery] = useState(editing?.name ?? '');
   const [suggestionsHidden, setSuggestionsHidden] = useState(false);
   const [error, setError] = useState('');
-  const manualCategory = useRef(Boolean(initialCategory || editing));
   const suggestions = editing || suggestionsHidden ? [] : itemSuggestions(data.shops, shop, query);
   const type = (value: string) => {
     setQuery(value); setSuggestionsHidden(false); setError('');
-    if (!value.trim()) manualCategory.current = Boolean(initialCategory);
-    const match = itemSuggestions(data.shops, shop, value)[0];
-    if (match && !manualCategory.current) setCategory(match.groupId);
   };
   const add = (name: string) => {
     if (editingId) {
@@ -638,18 +651,18 @@ function AddItem({ shop, close, initialCategory, editingId, onAdded }: { shop: S
     } else { const id = actions.addItem(shop.id, category, name); onAdded?.(id, name.trim(), category); }
   };
   return <Sheet visible compact canSwipeDown={() => scrollY.current <= 1} title={addingCategory ? 'Add category' : editing ? 'Edit item' : 'Add item'} onShow={focusInput} onClose={() => { Keyboard.dismiss(); close(); }}><EditingRegion style={{ flexShrink: 1 }}>
-    {addingCategory ? <NewCategory embedded scrollOffset={scrollY} shop={shop} created={id => { setCategory(id); manualCategory.current = true; }}
+    {addingCategory ? <NewCategory embedded scrollOffset={scrollY} shop={shop} created={id => { setCategory(id); }}
       close={() => { setAddingCategory(false); scrollY.current = 0; focusInput(); }} /> : <View style={s.itemComposer}><ScrollView onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16} style={{ maxHeight: 260, flexShrink: 1 }} keyboardShouldPersistTaps="handled" nestedScrollEnabled bounces={false}>
       <View style={s.composerInput}><InlineInput inputRef={input} label={editing ? "Edit item name" : "New item name"} placeholder={editing ? "Item name" : "Add item…"} keepOpen={!editing} submitLabel={editing ? "Save item" : "Add item"} onAdd={add}
         value={query} onValueChange={type} /></View>
       {suggestions.length > 0 && <ScrollView style={s.suggestions} keyboardShouldPersistTaps="handled" nestedScrollEnabled bounces={false}>{suggestions.map(option => <Pressable key={option.name}
         accessibilityRole="button" accessibilityLabel={`Suggest ${option.name}, ${shop.groups[option.groupId].name}`}
-        onPress={() => { setQuery(option.name); setCategory(option.groupId); setSuggestionsHidden(true); manualCategory.current = false; }} style={s.suggestion}>
+        onPress={() => { setQuery(option.name); setCategory(option.groupId); setSuggestionsHidden(true); }} style={s.suggestion}>
         <Icon name={shop.groups[option.groupId].icon ?? 'bag'} color={entityTone(option.groupId, groups).color} size={19} />
         <Text style={[s.link, s.flex]}>{option.name}</Text><Text style={s.caption}>{shop.groups[option.groupId].name}</Text>
       </Pressable>)}</ScrollView>}
       <Text style={s.selectedCategoryLabel}>Category</Text>
-      <CategoryButtons shop={shop} selected={category} add={() => { scrollY.current = 0; setAddingCategory(true); }} select={id => { manualCategory.current = true; setCategory(id); setError(''); }} />
+      <CategoryButtons shop={shop} selected={category} add={() => { scrollY.current = 0; setAddingCategory(true); }} select={id => { setCategory(id); setError(''); }} />
       <Pressable accessibilityRole="button" accessibilityLabel={editing ? "Cancel editing item" : "Cancel adding item"} style={s.textButton} onPress={() => { Keyboard.dismiss(); close(); }}><Text style={s.link}>Cancel</Text></Pressable>
       {Boolean(error) && <Text accessibilityRole="alert" style={ui.errorText}>{error}</Text>}
     </ScrollView></View>}
@@ -677,14 +690,14 @@ function usePageBack(back: () => void, enabled: boolean) {
     else x.value = withTiming(direction === 'left' ? -width : width, { duration: 340, easing: Easing.out(Easing.cubic), reduceMotion: ReduceMotion.System }, complete);
   };
   const header = usePanGesture({
-    enabled, minDistance: 18, maxPointers: 1,
+    enabled, minDistance: 10, maxPointers: 1,
     onActivate: event => { 'worklet'; headerActive.value = true; axis.value = 0; },
     onUpdate: event => { 'worklet'; if (closing.value) return; if (axis.value === 0) axis.value = swipeAxis(event.translationX, event.translationY); if (axis.value === 0) return; if (axis.value === 1) x.value = event.translationX; else y.value = Math.max(0, event.translationY); },
     onDeactivate: event => { 'worklet'; headerActive.value = false; const direction = backSwipeDirection(axis.value === 1 ? event.translationX : 0, axis.value === 2 ? event.translationY : 0, event.velocityX, event.velocityY); if (direction) exit(direction); else reset(); },
     onFinalize: () => { 'worklet'; if (headerActive.value) { headerActive.value = false; reset(); } },
   });
   const edge = usePanGesture({
-    enabled, hitSlop: { left: 0, width: 24 }, activeOffsetX: 18, failOffsetY: [-12, 12], maxPointers: 1,
+    enabled, hitSlop: { left: 0, width: 36 }, activeOffsetX: 8, failOffsetX: -8, failOffsetY: [-32, 32], maxPointers: 1,
     onActivate: () => { 'worklet'; edgeActive.value = true; },
     onUpdate: event => { 'worklet'; if (!closing.value) x.value = Math.max(0, event.translationX); },
     onDeactivate: event => { 'worklet'; edgeActive.value = false; if (backSwipeDirection(event.translationX, 0, event.velocityX, 0) === 'right') exit('right'); else reset(); },
@@ -714,7 +727,6 @@ function usePageBack(back: () => void, enabled: boolean) {
 
 function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; replaced: (id: string) => void }) {
   const { data } = useShops();
-  const [newGroup, setNewGroup] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [editingStore, setEditingStore] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -730,7 +742,7 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
     }
     setCategoryDraft(null);
   };
-  const startSorting = () => { setMenuOpen(false); setCategoryDraft(orderedGroups(shop)); setTopAdding(false); setEditingItem(null); setNewGroup(false); };
+  const startSorting = () => { setMenuOpen(false); setCategoryDraft(orderedGroups(shop)); setTopAdding(false); setEditingItem(null); };
   const [arrival, setArrival] = useState<{ id: string; name: string; groupId: string } | null>(null);
   const itemSort = data.itemSort ?? 'group';
   const [checking, setChecking] = useState<Set<string>>(() => new Set());
@@ -757,37 +769,34 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
     const slot = itemDropSlot(currentShop, chosen.source, chosen.target, chosen.after);
     if (slot) actions.moveItem(shop.id, chosen.source, slot.groupId, slot.beforeId);
   }, itemSort);
-  const page = usePageBack(back, !itemDrag.dragging && !editingStore && !topAdding && !editingItem && !newGroup && !sortingGroups && !menuOpen);
+  const page = usePageBack(back, !itemDrag.dragging && !editingStore && !topAdding && !editingItem && !sortingGroups && !menuOpen);
   const closePage = () => { if (sortingGroups) finishSorting(); else page.close(); };
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => { closePage(); return true; });
     return () => sub.remove();
   }, [page.close, categoryDraft, shop]);
   const completed = picked;
-  return <Animated.View style={s.flex} entering={SlideInDown.duration(240).easing(Easing.bezier(0.22, 1, 0.36, 1)).reduceMotion(ReduceMotion.System)}><GestureDetector gesture={page.edge} touchAction="pan-y"><Animated.View style={[s.flex, s.shopPage, page.style]}>
+  return <Animated.View style={s.flex} entering={SlideInDown.duration(240).easing(Easing.bezier(0.22, 1, 0.36, 1)).reduceMotion(ReduceMotion.System)}>
+    <View style={s.flex} {...(Platform.OS === 'web' ? { inert: sortingGroups } : {})}
+      pointerEvents={sortingGroups ? 'none' : 'auto'} accessibilityElementsHidden={sortingGroups}
+      importantForAccessibility={sortingGroups ? 'no-hide-descendants' : 'auto'} aria-hidden={sortingGroups}>
+    <GestureDetector gesture={page.edge} touchAction="pan-y"><Animated.View style={[s.flex, s.shopPage, page.style]}>
     <View style={s.listHeader} onLayout={event => setHeaderHeight(event.nativeEvent.layout.height)}>
-      <GestureDetector gesture={page.header} touchAction="none"><View style={s.navigation}>
-        <Pressable accessibilityRole="button" accessibilityLabel={sortingGroups ? 'Back to shop' : 'Back to stores'} onPress={closePage} style={s.backLink}>
-          <Icon name="back" /><Text style={s.link}>{sortingGroups ? shop.name : 'Stores'}</Text>
+      <GestureDetector gesture={page.header} touchAction="none"><View style={s.pageHeader}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Back to stores" onPress={closePage} style={s.headerBack}>
+          <Icon name="back" />
         </Pressable>
-        <View style={s.flex} />
-        {!sortingGroups && <View style={s.headerActions}>
+        {editingStore ? <View style={s.headerCopy}><NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={() => setEditingStore(false)} /></View> : <Pressable style={s.headerCopy} accessibilityRole="button" accessibilityLabel={`${shop.name} store name`} accessibilityHint="Hold the name to rename"
+          onLongPress={() => setEditingStore(true)} delayLongPress={DRAG_DELAY}>
+          <Text accessibilityRole="header" numberOfLines={1} style={s.title}>{shop.name}</Text>
+          <Text style={s.caption}>{flatItems.length} {flatItems.length === 1 ? 'item' : 'items'}</Text>
+        </Pressable>}
+        <View style={s.headerActions}>
+          <IconButton icon="categories" label="Categories" onPress={startSorting} />
           <IconButton icon="share" label="Share shop" onPress={() => { setMenuOpen(false); setSharing(true); }} />
           <IconButton icon="more" label="Store settings" onPress={() => setMenuOpen(!menuOpen)} />
-        </View>}
+        </View>
       </View></GestureDetector>
-      {!sortingGroups && <>
-        {editingStore ? <View ><NameEditor name={shop.name} label="Edit store name" save={name => actions.renameShop(shop.id, name)} close={() => setEditingStore(false)} /></View> : <View style={s.storeHeading}>
-          <Pressable style={s.storeTitleTouch} accessibilityRole="button" accessibilityLabel={`${shop.name} store name`} accessibilityHint="Hold the name to rename"
-            onLongPress={() => setEditingStore(true)} delayLongPress={DRAG_DELAY}>
-            <Text accessibilityRole="header" numberOfLines={1} style={s.title}>{shop.name}</Text>
-          </Pressable>
-        </View>}
-        <Pressable accessibilityRole="button" accessibilityLabel="Edit store picking order" style={s.orderBar} onPress={startSorting}>
-          <Icon name="groupSort" /><Text style={[s.orderLabel, s.flex]}>Store order</Text><Text style={s.link}>Edit</Text>
-        </Pressable>
-        <Text style={s.caption}>{flatItems.length} {flatItems.length === 1 ? 'item' : 'items'}</Text>
-      </>}
       {menuOpen && <View style={s.menuPosition}><EditingRegion onDismiss={() => setMenuOpen(false)}>
         <Animated.View entering={fadeIn} style={s.viewMenu}>
           <Text style={[s.menuCaption, s.menuShare]}>Sort items</Text>
@@ -797,11 +806,8 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
             <Text style={[s.link, s.flex]}>{label}</Text>{itemSort === sort && <Icon name="check" size={18} />}
           </Pressable>)}
           <Text style={[s.menuCaption, s.menuShare]}>Categories</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="Add group" style={s.menuOption} onPress={() => { setMenuOpen(false); setNewGroup(true); }}>
-            <Text style={[s.link, s.flex]}>Add group</Text><Icon name="plus" size={18} />
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Group sorting" style={s.menuOption} onPress={startSorting}>
-            <Text style={[s.link, s.flex]}>Group sorting</Text><Icon name="groupSort" size={18} />
+          <Pressable accessibilityRole="button" accessibilityLabel="Manage categories" style={s.menuOption} onPress={startSorting}>
+            <Text style={[s.link, s.flex]}>Manage categories</Text><Icon name="right" size={18} />
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Share shop ID" style={[s.menuOption, s.menuShare]} onPress={() => { setMenuOpen(false); setSharing(true); }}>
             <Text style={[s.link, s.flex]}>Share shop ID</Text><Icon name="share" size={18} />
@@ -809,26 +815,29 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
         </Animated.View>
       </EditingRegion></View>}
     </View>
-    {sortingGroups ? <CategoryOrder shop={shop} draft={categoryDraft} change={setCategoryDraft} close={finishSorting} /> : <ItemEditorContext.Provider value={id => { setEditingItem(id); setTopAdding(false); }}><ItemDragContext.Provider value={itemDrag}><GestureDetector gesture={page.body} touchAction="pan-y"><View style={s.flex}><ShopScroll page={page}>
+    <ItemEditorContext.Provider value={id => { setEditingItem(id); setTopAdding(false); }}><ItemDragContext.Provider value={itemDrag}><GestureDetector gesture={page.body} touchAction="pan-y"><View style={s.flex}><ShopScroll page={page}>
       <View>
         <View style={flatItems.length ? s.itemPanel : undefined}>{flatItems.map(([id]) => <ItemRow key={id} shop={shop} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={() => toggle(id)} />)}</View>
         {!flatItems.length && groups.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="Add an item to the list" style={s.emptyList} onPress={() => setTopAdding(true)}>
           <Icon name="bag" size={28} /><Text style={s.caption}>{picked.length ? 'Nothing left to pick up' : 'Add your first item'}</Text>
         </Pressable>}
       </View>
-      {!groups.length && <View style={s.noGroups}><Text style={s.emptyTitle}>Start with a group</Text><Text style={s.caption}>Use ⋯ → Add group to create your first category.</Text></View>}
+      {!groups.length && <View style={s.noGroups}><Text style={s.emptyTitle}>Start with a category</Text><Text style={s.caption}>Open Categories to create your first category.</Text></View>}
       <ListTail shopId={shop.id} kind="item" last={flatItems.at(-1)?.[0]} />
       <View>
         {completed.length > 0 && <View style={s.doneSection}><Text style={s.doneLabel}>Done</Text>{completed.map(([id]) => <ItemRow key={id} shop={shop} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={() => toggle(id)} />)}</View>}
       </View>
-    </ShopScroll></View></GestureDetector></ItemDragContext.Provider></ItemEditorContext.Provider>}
-    {!sortingGroups && !topAdding && !editingItem && <FloatingAddButton label="Add item" disabled={!groups.length} onPress={() => setTopAdding(true)} />}
+    </ShopScroll></View></GestureDetector></ItemDragContext.Provider></ItemEditorContext.Provider>
+    {!topAdding && !editingItem && <FloatingAddButton label="Add item" disabled={!groups.length} onPress={() => setTopAdding(true)} />}
     {arrival && !sortingGroups && <ItemArrival key={arrival.id} shop={shop} item={arrival} start={76} end={headerHeight + 16} close={() => setArrival(null)} />}
       {(topAdding || editingItem) && <AddItem key={editingItem ?? 'new'} shop={shop} editingId={editingItem ?? undefined}
         onAdded={(id, name, groupId) => setArrival({ id, name, groupId })} close={() => { setTopAdding(false); setEditingItem(null); }} />}
-    {newGroup && <NewCategory shop={shop} created={() => {}} close={() => setNewGroup(false)} />}
     {sharing && <ShareShop shop={shop} replaced={replaced} close={() => setSharing(false)} />}
-  </Animated.View></GestureDetector></Animated.View>;
+    </Animated.View></GestureDetector></View>
+    {sortingGroups && <Animated.View style={StyleSheet.absoluteFill} entering={SlideInDown.duration(240).easing(Easing.bezier(0.22, 1, 0.36, 1)).reduceMotion(ReduceMotion.System)}>
+      <DraxProvider><CategoryOrder shop={shop} draft={categoryDraft!} change={setCategoryDraft} close={finishSorting} /></DraxProvider>
+    </Animated.View>}
+  </Animated.View>;
 }
 
 function Main() {
@@ -872,9 +881,7 @@ function Main() {
       </View>
       {shop && <View style={StyleSheet.absoluteFill}><ShoppingList key={shop.id} shop={shop} replaced={setSelected} back={() => setSelected(null)} /></View>}
     </View>
-    {undo && <Animated.View entering={fadeIn} exiting={fadeOut} style={s.undoBanner} accessibilityLiveRegion="polite">
-      <Text numberOfLines={1} style={s.undoLabel}>{undo.label}</Text><Pressable accessibilityRole="button" accessibilityLabel="Undo deletion" onPress={actions.undo} style={s.undoButton}><Text style={s.undoText}>Undo</Text></Pressable>
-    </Animated.View>}
+    {undo && <FloatingUndoButton key={undo.startedAt} label={undo.label} onPress={actions.undo} duration={UNDO_MS} />}
   </KeyboardAvoidingView>;
 }
 
@@ -893,14 +900,14 @@ export default function App() {
 }
 
 const s = StyleSheet.create({
-  categoryOrderPage: { flex: 1, backgroundColor: c.background, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, gap: 8 },
+  categoryOrderPage: { flex: 1, backgroundColor: c.background, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12, gap: 8 },
   itemArrival: { position: 'absolute', left: 12, right: 12, top: 0, zIndex: 1000, elevation: 40, backgroundColor: c.white, borderRadius: 12, borderWidth: 1, borderColor: c.border, minHeight: 54, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: c.text, shadowOpacity: 0.15, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   orderStoreLabel: { fontFamily: f.medium, color: c.muted, textTransform: 'uppercase', fontSize: 12, marginVertical: 10 },
-  categoryOrderRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  categoryOrderRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 6, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  categoryRowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingLeft: 16 },
   liftedCard: { flex: 1, borderColor: '#85A67D' },
-  orderNumber: { minWidth: 30, height: 30, borderRadius: 8, backgroundColor: c.background, justifyContent: 'center', alignItems: 'center' },
   orderIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  orderGrip: { width: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginRight: 6 },
+  orderGrip: { width: 12, height: 20, flexDirection: 'row', flexWrap: 'wrap', alignContent: 'center', justifyContent: 'center', gap: 4 },
   gripDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: c.muted },
   selectedCategoryLabel: { fontFamily: f.semibold, fontSize: 12, color: c.text, paddingTop: 8 },
   editorHeading: { fontFamily: f.semibold, fontSize: 17, color: c.text, marginBottom: 6 },
@@ -917,23 +924,20 @@ const s = StyleSheet.create({
   currentStoreName: { fontFamily: f.bold, fontSize: 22, lineHeight: 28, includeFontPadding: false, color: c.text },
   nameTouch: { alignSelf: 'flex-start', maxWidth: '100%' },
   storeTextOverlay: { position: 'absolute', left: 84, right: 16, top: 0, bottom: 0, justifyContent: 'center' },
-  storeShareButton: { position: 'absolute', right: 52, top: 7 },
   groupTextOverlay: { position: 'absolute', left: 44, right: 104, top: 0, bottom: 0, justifyContent: 'center' },
-  storeDragArea: { flex: 1, paddingLeft: 16, paddingRight: 8, paddingTop: 7, flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  storeDragArea: { flex: 1, paddingLeft: 16, paddingRight: 8, flexDirection: 'row', alignItems: 'center', gap: 12 },
   storeOpen: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48 },
   fieldLabel: { fontFamily: f.semibold, fontSize: 14, color: c.text },
   addModes: { flexDirection: 'row', gap: 10 }, addMode: { flex: 1, minHeight: 50, borderWidth: 1, borderColor: c.border, borderRadius: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   addModeSelected: { backgroundColor: c.primarySoft, borderColor: c.primary },
   dropTarget: { borderRadius: 12 },
-  undoBanner: { position: 'absolute', bottom: 16, left: 16, right: 16, borderRadius: 14, backgroundColor: c.text, flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 6, gap: 12, elevation: 6 },
-  undoLabel: { flex: 1, fontFamily: f.medium, fontSize: 13, color: c.white }, undoButton: { minHeight: 50, minWidth: 62, alignItems: 'center', justifyContent: 'center' }, undoText: { fontFamily: f.bold, fontSize: 14, color: '#B9E0C5' },
   storesContent: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 24, paddingBottom: 112 },
   homeSubtitle: { fontFamily: f.regular, fontSize: 16, color: c.muted },
   storesPage: { flex: 1, backgroundColor: c.background },
   homeHeader: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 0 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   title: { fontFamily: f.bold, fontSize: 32, lineHeight: 40, color: c.text, flexShrink: 1 },
-  storeRows: { gap: 12 }, storeRow: { minHeight: 104, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  storeRows: { gap: 12 }, storeRow: { minHeight: 88, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
   storeNameWrap: { flex: 1, gap: 4 }, storeName: { fontFamily: f.bold, color: c.text, fontSize: 18 },
   storeBadge: { width: 52, height: 52, borderRadius: 14, backgroundColor: c.primarySoft, alignItems: 'center', justifyContent: 'center' },
   storeInitials: { fontFamily: f.bold, fontSize: 24, color: c.primary },
@@ -943,10 +947,11 @@ const s = StyleSheet.create({
   dangerText: { color: c.danger, fontFamily: f.medium, fontSize: 15 }, link: { color: c.primary, fontFamily: f.medium, fontSize: 14 },
   editStoreInput: { flex: undefined, borderWidth: 1, borderColor: c.border, borderRadius: 10 },
   listHeader: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 8, gap: 6, zIndex: 10, backgroundColor: c.background },
+  pageHeader: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 52 },
+  headerBack: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerCopy: { flex: 1, minWidth: 0, justifyContent: 'center' },
   backLink: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  storeHeading: { alignItems: 'flex-start', paddingBottom: 4 },
-  orderBar: { minHeight: 46, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: c.primarySoft, borderRadius: 12 },
-  orderLabel: { fontFamily: f.medium, fontSize: 15, color: c.text },
+  storeHeading: { alignItems: 'flex-start', gap: 2 },
   itemPanel: { backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
   itemComposer: { paddingBottom: 4, flexShrink: 1 },
   composerInput: { borderWidth: 1.5, borderColor: c.primary, borderRadius: 14, paddingHorizontal: 6, overflow: 'hidden', marginBottom: 6 },
@@ -986,7 +991,7 @@ const s = StyleSheet.create({
   groupName: { flexShrink: 1, fontFamily: f.semibold, fontSize: 17, color: c.text }, item: { flexDirection: 'row', minHeight: 64, alignItems: 'center' },
   itemDivider: { position: 'absolute', left: 52, right: 0, bottom: 0, height: StyleSheet.hairlineWidth * 2, backgroundColor: c.border },
   checkboxTarget: { width: 44, minHeight: 64, alignItems: 'center', justifyContent: 'center' }, checkbox: { width: 22, height: 22, borderWidth: 1.8, borderColor: c.muted, borderRadius: 3, alignItems: 'center', justifyContent: 'center' },
-  checked: { backgroundColor: c.primary, borderColor: c.primary }, itemTextOverlay: { flex: 1, marginLeft: 52, marginRight: 11, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48 }, itemNameTarget: { alignSelf: 'flex-start', maxWidth: '100%' },
+  checked: { backgroundColor: c.primary, borderColor: c.primary }, itemTextOverlay: { flex: 1, marginLeft: 52, marginRight: 11, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 48 }, itemNameTarget: { flex: 1, minHeight: 60, justifyContent: 'center' },
   itemName: { fontFamily: f.medium, fontSize: 18, color: c.text, lineHeight: 23 }, doneName: { color: c.muted, textDecorationLine: 'line-through' },
   emptyGroup: { minHeight: 44, justifyContent: 'center', paddingLeft: 25 }, noGroups: { gap: 10, paddingVertical: 26 },
   addGroup: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 48, marginTop: 2 },
