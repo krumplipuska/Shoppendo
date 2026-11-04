@@ -10,7 +10,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { actions, errorMessage, getShopSnapshot, load, useShops, UNDO_MS } from './src/store';
-import { activeItems, doneItems, missingItems, formatCode, GROUP_ICONS, itemSuggestions, itemDropSlot, listItems, orderedGroups, mergeCategoryOrder, storeInitials, type GroupIcon, type Item, type Shop } from './src/model';
+import { activeItems, doneItems, findListItem, missingItems, formatCode, GROUP_ICONS, itemSuggestions, itemDropSlot, listItems, orderedGroups, mergeCategoryOrder, storeInitials, type GroupIcon, type Item, type Shop } from './src/model';
 import { Button, Icon, IconButton, EditingRegion, EditingSurface, useFinishEditing, InlineInput, Sheet, SwipeToDelete, FloatingAddButton, FloatingUndoButton, ui } from './src/ui';
 import { colors as c, fonts as f, entityTone } from './src/theme';
 
@@ -345,8 +345,8 @@ function ItemCategory({ groups, order, groupId }: GroupInfo & { groupId: string 
 }
 
 // Memoized: rows receive only stable or per-item props, so editing one item re-renders one row.
-const ItemRow = memo(function ItemRow({ shopId, groups, order, id, item, toggle, showCategory = false, manualOrder = true }: GroupInfo & {
-  shopId: string; id: string; item: Item; toggle: (id: string) => void; showCategory?: boolean; manualOrder?: boolean;
+const ItemRow = memo(function ItemRow({ shopId, groups, order, id, item, toggle, showCategory = false, manualOrder = true, flagged = false }: GroupInfo & {
+  shopId: string; id: string; item: Item; toggle: (id: string) => void; showCategory?: boolean; manualOrder?: boolean; flagged?: boolean;
 }) {
   const editItem = useContext(ItemEditorContext);
   const animateEntry = useContext(EntryAnimation).current;
@@ -381,7 +381,7 @@ const ItemRow = memo(function ItemRow({ shopId, groups, order, id, item, toggle,
       style={s.itemDrop} draggingStyle={s.itemDragOrigin} dragReleasedStyle={s.itemDragOrigin}
      >
       <Animated.View style={motion}><SwipeToDelete extraAction={missingAction} label={item.name} onDelete={() => actions.deleteItem(shopId, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop}>{action =>
-        <View style={[s.item, item.missing && s.missingRow]}>
+        <View style={[s.item, item.missing && s.missingRow, flagged && s.flaggedRow]}>
           <DraxHandle style={StyleSheet.absoluteFill}><View style={s.item} pointerEvents="box-none">
           <Pressable accessibilityRole="checkbox" accessibilityLabel={`${item.name}, ${item.done ? 'picked up' : 'to get'}`} accessibilityState={{ checked: item.done }}
             onPress={() => { if (!drag.held.current) toggle(id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY} style={[s.checkboxTarget, { position: 'absolute', left: 0, top: 0, bottom: 0 }]}>
@@ -394,7 +394,7 @@ const ItemRow = memo(function ItemRow({ shopId, groups, order, id, item, toggle,
             onAccessibilityAction={event => { const name = event.nativeEvent.actionName; if (name === 'missing') missingAction.onPress(); else if (name === 'delete') actions.deleteItem(shopId, id); else move(name === 'increment' ? 1 : -1); }}
             onKeyDown={event => { const key = event.nativeEvent as unknown as { altKey?: boolean; key?: string }; if (key.altKey && ['ArrowUp', 'ArrowDown'].includes(key.key ?? '')) { event.preventDefault(); move(key.key === 'ArrowUp' ? -1 : 1); } }}
             onPress={() => { if (!drag.held.current) editItem(id); }} onLongPress={() => {}} delayLongPress={DRAG_DELAY}>
-            <Text style={[s.itemName, item.done && s.doneName]}>{item.name}</Text>
+            <Text style={[s.itemName, item.done && s.doneName, flagged && { color: c.danger }]}>{item.name}</Text>
           </Pressable>
           {action(showCategory && <Pressable accessibilityRole="button" accessibilityLabel={`Change category for ${item.name}`}
             accessibilityHint={`Current category: ${groups[item.groupId]?.name ?? 'Unknown'}`} style={{ minHeight: 60, justifyContent: 'center' }}
@@ -710,7 +710,8 @@ function NewCategory({ shop, created, close, embedded = false, scrollOffset, edi
     onClose={finish}>{form}</Sheet>;
 }
 
-function AddItem({ shop, close, initialCategory, editingId, onAdded }: { shop: Shop; close: () => void; initialCategory?: string; editingId?: string; onAdded?: (id: string, name: string, groupId: string) => void }) {
+function AddItem({ shop, close, initialCategory, editingId, onAdded, onDuplicate }: { shop: Shop; close: () => void; initialCategory?: string; editingId?: string; onAdded?: (id: string, name: string, groupId: string) => void; onDuplicate?: (id: string | null) => void }) {
+  const [duplicate, setDuplicate] = useState(false);
   const input = useRef<React.ComponentRef<typeof TextInput>>(null);
   const focusInput = useCallback(() => { requestAnimationFrame(() => input.current?.focus()); }, []);
   const [addingCategory, setAddingCategory] = useState(false);
@@ -725,22 +726,38 @@ function AddItem({ shop, close, initialCategory, editingId, onAdded }: { shop: S
   const suggestions = editing || suggestionsHidden ? [] : itemSuggestions(data.shops, shop, query);
   const type = (value: string) => {
     setQuery(value); setSuggestionsHidden(false); setError('');
+    if (duplicate) { setDuplicate(false); onDuplicate?.(null); }
   };
   const add = (name: string) => {
     if (editingId) {
       actions.renameItem(shop.id, editingId, name);
       if (category !== editing?.groupId) actions.moveItem(shop.id, editingId, category, null, true);
       Keyboard.dismiss(); close();
-    } else { const id = actions.addItem(shop.id, category, name); onAdded?.(id, name.trim(), category); }
+    } else {
+      const current = getShopSnapshot().data.shops.find(entry => entry.id === shop.id) ?? shop;
+      const existing = findListItem(current, name);
+      if (existing && !existing[1].done && !existing[1].missing) {
+        // Already on the list: keep the text, flag the input and the item instead of adding a copy.
+        setDuplicate(true); onDuplicate?.(existing[0]);
+        return false;
+      }
+      if (existing) {
+        // Done or missing: put the existing item back on the list instead of adding a copy.
+        actions.restoreItem(shop.id, existing[0]); onAdded?.(existing[0], existing[1].name, existing[1].groupId);
+        return;
+      }
+      const id = actions.addItem(shop.id, category, name); onAdded?.(id, name.trim(), category);
+    }
   };
   return <Sheet visible compact canSwipeDown={() => scrollY.current <= 1} title={addingCategory ? 'Add category' : editing ? 'Edit item' : 'Add item'} onShow={focusInput} onClose={() => { Keyboard.dismiss(); close(); }}><EditingRegion style={{ flexShrink: 1 }}>
     {addingCategory ? <NewCategory embedded scrollOffset={scrollY} shop={shop} created={id => { setCategory(id); }}
       close={() => { setAddingCategory(false); scrollY.current = 0; focusInput(); }} /> : <View style={s.itemComposer}><ScrollView onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16} style={s.composerScroll} contentContainerStyle={s.composerScrollContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled bounces={false}>
-      <View style={s.composerInput}><InlineInput inputRef={input} label={editing ? "Edit item name" : "New item name"} placeholder={editing ? "Item name" : "Add item…"} keepOpen={!editing} submitLabel={editing ? "Save item" : "Add item"} onAdd={add}
+      <View style={[s.composerInput, duplicate && s.composerDuplicate]}><InlineInput inputRef={input} label={editing ? "Edit item name" : "New item name"} placeholder={editing ? "Item name" : "Add item…"} keepOpen={!editing} submitLabel={editing ? "Save item" : "Add item"} onAdd={add}
         value={query} onValueChange={type} /></View>
+      {duplicate && <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={s.duplicateText}>Item is already in the list</Text>}
       {suggestions.length > 0 && <ScrollView style={s.suggestions} keyboardShouldPersistTaps="handled" nestedScrollEnabled bounces={false}>{suggestions.map(option => <Pressable key={option.name}
         accessibilityRole="button" accessibilityLabel={`Suggest ${option.name}, ${shop.groups[option.groupId].name}`}
-        onPress={() => { setQuery(option.name); setCategory(option.groupId); setSuggestionsHidden(true); }} style={s.suggestion}>
+        onPress={() => { setQuery(option.name); setCategory(option.groupId); setSuggestionsHidden(true); if (duplicate) { setDuplicate(false); onDuplicate?.(null); } }} style={s.suggestion}>
         <Icon name={shop.groups[option.groupId].icon ?? 'bag'} color={entityTone(option.groupId, groups).color} size={19} />
         <Text style={[s.link, s.flex]}>{option.name}</Text><Text style={s.caption}>{shop.groups[option.groupId].name}</Text>
       </Pressable>)}</ScrollView>}
@@ -827,6 +844,7 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
   };
   const startSorting = () => { setMenuOpen(false); setCategoryDraft(orderedGroups(shop)); setTopAdding(false); setEditingItem(null); };
   const [arrival, setArrival] = useState<{ id: string; name: string; groupId: string } | null>(null);
+  const [flaggedItem, setFlaggedItem] = useState<string | null>(null);
   const itemSort = data.itemSort ?? 'group';
   const [checking, setChecking] = useState<Set<string>>(() => new Set());
   const checkTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -925,7 +943,7 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
     </View>
     <EntryAnimation.Provider value={entryGate}><ItemEditorContext.Provider value={editItem}><ItemDragContext.Provider value={itemDrag}><GestureDetector gesture={page.body} touchAction="pan-y"><View style={s.flex}><ShopScroll page={page}>
       <View>
-        <View style={flatItems.length ? s.itemPanel : undefined}>{flatItems.map(([id]) => <ItemRow key={id} shopId={shop.id} groups={shop.groups} order={groups} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={toggle} />)}</View>
+        <View style={flatItems.length ? s.itemPanel : undefined}>{flatItems.map(([id]) => <ItemRow key={id} shopId={shop.id} groups={shop.groups} order={groups} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={toggle} flagged={flaggedItem === id} />)}</View>
         {!flatItems.length && groups.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="Add an item to the list" style={s.emptyList} onPress={() => setTopAdding(true)}>
           <Icon name="bag" size={28} /><Text style={s.caption}>{picked.length || missing.length ? 'Nothing left to pick up' : 'Add your first item'}</Text>
         </Pressable>}
@@ -940,7 +958,8 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
     {!topAdding && !editingItem && <FloatingAddButton label="Add item" disabled={!groups.length} onPress={() => setTopAdding(true)} />}
     {arrival && !sortingGroups && <ItemArrival key={arrival.id} shop={shop} item={arrival} start={76} end={headerHeight + 16} close={() => setArrival(null)} />}
       {(topAdding || editingItem) && <AddItem key={editingItem ?? 'new'} shop={shop} editingId={editingItem ?? undefined}
-        onAdded={(id, name, groupId) => setArrival({ id, name, groupId })} close={() => { setTopAdding(false); setEditingItem(null); }} />}
+        onAdded={(id, name, groupId) => setArrival({ id, name, groupId })} onDuplicate={setFlaggedItem}
+        close={() => { setTopAdding(false); setEditingItem(null); setFlaggedItem(null); }} />}
     {sharing && <ShareShop shop={shop} replaced={replaced} close={() => setSharing(false)} />}
     </Animated.View></GestureDetector></View>
     {sortingGroups && <Animated.View style={StyleSheet.absoluteFill} entering={SlideInDown.duration(240).easing(Easing.bezier(0.22, 1, 0.36, 1)).reduceMotion(ReduceMotion.System)}>
@@ -1086,6 +1105,8 @@ const s = StyleSheet.create({
   composerScroll: { maxHeight: 260, flexShrink: 1, marginHorizontal: -24 },
   composerScrollContent: { paddingHorizontal: 24 },
   composerInput: { borderWidth: 1.5, borderColor: c.primary, borderRadius: 14, paddingHorizontal: 6, overflow: 'hidden', marginBottom: 6 },
+  composerDuplicate: { borderColor: c.danger, backgroundColor: '#FDF4F2' },
+  duplicateText: { color: c.danger, fontFamily: f.medium, fontSize: 13, lineHeight: 18, marginTop: -2, marginBottom: 6, marginLeft: 4 },
   menuPosition: { position: 'absolute', top: 62, right: 12, zIndex: 20 },
   viewMenu: { width: 208, padding: 8, backgroundColor: c.white, borderRadius: 14, borderWidth: 1, borderColor: c.border, elevation: 8, shadowColor: c.text, shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: 4 } },
   menuCaption: { fontFamily: f.medium, color: c.muted, fontSize: 12, paddingHorizontal: 10, paddingVertical: 6 },
@@ -1135,6 +1156,7 @@ const s = StyleSheet.create({
   statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 16, paddingHorizontal: 6, paddingVertical: 4 },
   missingTint: { backgroundColor: '#F9E9E6' },
   missingRow: { backgroundColor: '#F9E9E6', borderRadius: 14 },
+  flaggedRow: { backgroundColor: '#F9E9E6', borderRadius: 14 },
   doneSection: { marginVertical: 8, gap: 4 },
   doneLabel: { fontFamily: f.semibold, fontSize: 16, color: c.muted, marginLeft: 4, marginBottom: 4 },
   idBox: { backgroundColor: c.secondarySoft, borderRadius: 14, padding: 18, gap: 10 }, idLabel: { fontFamily: f.bold, color: c.secondary, fontSize: 10, letterSpacing: 1 },

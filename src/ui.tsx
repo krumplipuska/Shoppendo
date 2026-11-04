@@ -158,7 +158,7 @@ export function Button({ label, onPress, secondary = false, disabled = false, bu
 }
 
 export function InlineInput({ placeholder, leadingIcon, label, onAdd, autoFocus, initial = '', submitLabel = 'Add', inputRef, onCancel, maxLength = 200, keepOpen = true, onValueChange, value: controlledValue }: {
-  placeholder: string; leadingIcon?: GroupIcon; label: string; onAdd: (value: string) => void; initial?: string; submitLabel?: string;
+  placeholder: string; leadingIcon?: GroupIcon; label: string; onAdd: (value: string) => void | boolean; initial?: string; submitLabel?: string;
   autoFocus?: boolean; inputRef?: React.RefObject<InputHandle | null>; onCancel?: () => void; maxLength?: number; keepOpen?: boolean; onValueChange?: (value: string) => void; value?: string;
 }) {
   const ref = useRef<InputHandle>(null);
@@ -169,7 +169,11 @@ export function InlineInput({ placeholder, leadingIcon, label, onAdd, autoFocus,
   const [error, setError] = useState('');
   const submit = () => {
     if (!value.trim()) return;
-    try { onAdd(value); setError(''); if (keepOpen) { setValue(''); (inputRef ?? ref).current?.focus(); } else Keyboard.dismiss(); }
+    try {
+      // onAdd returns false to keep the typed text, e.g. when the item is already on the list.
+      if (onAdd(value) === false) return;
+      setError(''); if (keepOpen) { setValue(''); (inputRef ?? ref).current?.focus(); } else Keyboard.dismiss();
+    }
     catch (error) { setError((error as Error).message); }
   };
   const acceptOutside = () => {

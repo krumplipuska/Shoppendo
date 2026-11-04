@@ -271,6 +271,12 @@ export const actions = {
     update({ shopId, target: 'items', entityId: itemId, data: { done, missing: false, updatedAt: Date.now() } });
     return done;
   },
+  // Put a done or missing item back on the list.
+  restoreItem(shopId: string, itemId: string) {
+    const item = saved.shops.find(s => s.id === shopId)?.items[itemId];
+    if (!item || item.deleted) return;
+    update({ shopId, target: 'items', entityId: itemId, data: { done: false, missing: false, updatedAt: Date.now() } });
+  },
   setItemMissing(shopId: string, itemId: string, missing: boolean) {
     const item = saved.shops.find(s => s.id === shopId)?.items[itemId];
     if (!item || item.deleted) return;

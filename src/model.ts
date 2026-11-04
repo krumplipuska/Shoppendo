@@ -170,6 +170,20 @@ export function listItems(shop: Shop, sort: ItemSort = 'group') {
 }
 
 const searchName = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ');
+
+// The item with this name (ignoring case and extra spaces) in a live category. An item still on the
+// list wins; otherwise the most recently changed done or missing item, so adding it again can restore it.
+export function findListItem(shop: Shop, name: string): [string, Item] | undefined {
+  const term = searchName(name);
+  let match: [string, Item] | undefined;
+  for (const entry of Object.entries(shop.items)) {
+    const item = entry[1];
+    if (item.deleted || !shop.groups[item.groupId] || shop.groups[item.groupId].deleted || searchName(item.name) !== term) continue;
+    if (!item.done && !item.missing) return entry;
+    if (!match || item.updatedAt > match[1].updatedAt) match = entry;
+  }
+  return match;
+}
 export function itemSuggestions(shops: Shop[], shop: Shop, query: string) {
   const term = searchName(query);
   if (!term) return [];

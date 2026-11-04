@@ -2,7 +2,7 @@ import { entityTone } from '../src/theme.ts';
 import { deleteSwipeProgress, backSwipeDirection, swipeAxis, keyboardOverlap } from '../src/interaction.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acknowledge, activeItems, decodeSaved, doneItems, missingItems, doneOverflow, MAX_DONE_ITEMS, edit, emptyState, formatCode, GROUP_ICONS, isGroup, itemSuggestions, listItems, mergeRemote, mergeCategoryOrder, normalizeCode, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, storeInitials, validName } from '../src/model.ts';
+import { acknowledge, activeItems, decodeSaved, doneItems, findListItem, missingItems, doneOverflow, MAX_DONE_ITEMS, edit, emptyState, formatCode, GROUP_ICONS, isGroup, itemSuggestions, listItems, mergeRemote, mergeCategoryOrder, normalizeCode, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, storeInitials, validName } from '../src/model.ts';
 
 const code = 'ABCDEFGHJKLMNPQRSTUV';
 const item = (name, groupId = 'fruit') => ({ name, groupId, done: false, deleted: false, createdAt: 1, updatedAt: 1 });
@@ -471,4 +471,19 @@ test('remote snapshots that echo local data keep the same state; changes reuse u
   assert.equal(changed.shops[0].items.apple.done, true);
   assert.equal(changed.shops[0].items.loaf, local.items.loaf, 'untouched items keep their identity');
   assert.equal(changed.shops[0].groups, local.groups, 'untouched groups keep their identity');
+});
+
+test('adding a name finds the item already on the list first, then the latest done or missing one', () => {
+  const data = shop();
+  data.items = {
+    oldDone: { ...item('Milk'), done: true, updatedAt: 5 },
+    newMissing: { ...item('milk ', 'bread'), missing: true, updatedAt: 9 },
+    gone: { ...item('MILK'), deleted: true, updatedAt: 20 },
+  };
+  assert.equal(findListItem(data, '  MILK ')?.[0], 'newMissing', 'ignores case/spaces and deleted items; latest restorable wins');
+  data.items.active = { ...item('Milk'), updatedAt: 1 };
+  assert.equal(findListItem(data, 'milk')?.[0], 'active', 'an item still on the list wins');
+  data.groups.fruit.deleted = true;
+  assert.equal(findListItem(data, 'milk')?.[0], 'newMissing', 'items in deleted categories are ignored');
+  assert.equal(findListItem(data, 'Bread'), undefined);
 });
