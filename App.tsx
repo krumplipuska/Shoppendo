@@ -874,7 +874,7 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
         </Pressable>
         <View style={s.headerCopy}>
           {editingStore ? <TextInput accessibilityLabel="Store name" autoFocus selectTextOnFocus defaultValue={shop.name}
-            style={[s.title, { padding: 0 }]} maxLength={80} returnKeyType="done" submitBehavior="submit"
+            style={[s.title, { padding: 0, lineHeight: undefined, height: 40 }]} maxLength={80} returnKeyType="done" submitBehavior="submit"
             onSubmitEditing={event => {
               const name = event.nativeEvent.text.trim();
               if (!name) return;

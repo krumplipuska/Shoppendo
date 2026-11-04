@@ -320,7 +320,9 @@ export const ui = StyleSheet.create({
   button: { minHeight: 50, backgroundColor: c.primary, borderRadius: 13, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 12 },
   buttonText: { fontFamily: f.bold, fontSize: 15, color: c.white },
   inline: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: c.border, minHeight: 56, gap: 8 },
-  input: { flex: 1, fontFamily: f.regular, fontSize: 16, color: c.text, paddingVertical: 13, minHeight: 48, paddingHorizontal: 8, ...Platform.select({ web: { outlineStyle: 'none' as never } }) },
+  // Fixed height and no vertical padding: iOS then centres the text, placeholder and cursor together.
+  // Vertical padding becomes a text inset that pushed the text below the cursor.
+  input: { flex: 1, fontFamily: f.regular, fontSize: 16, color: c.text, height: 48, paddingVertical: 0, paddingHorizontal: 8, textAlignVertical: 'center', includeFontPadding: false, ...Platform.select({ web: { outlineStyle: 'none' as never } }) },
   errorText: { color: c.danger, fontFamily: f.regular, fontSize: 12, lineHeight: 18, marginTop: 6 },
   modalRoot: { flex: 1 },
   backdrop: { backgroundColor: '#0D201840' },
