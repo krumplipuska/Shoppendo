@@ -7,7 +7,12 @@ export const fonts = {
 };
 
 const entityPalette = ['#246B4D', '#86519A', '#237294', '#A45B23', '#A14F70', '#677B27', '#465CB0', '#A34739', '#247D78', '#846624', '#6555A1', '#476D83'];
-export function entityTone(id: string, ids: string[]) {
+// Colour assignment depends only on the set of ids; cache it so list rows don't re-sort and re-hash every render.
+const toneCache = new Map<string, Map<string, string>>();
+function assignTones(ids: string[]) {
+  const key = ids.join('\u0000');
+  const cached = toneCache.get(key);
+  if (cached) return cached;
   const assigned = new Map<string, string>();
   const used = new Set<number>();
   for (const key of [...new Set(ids)].sort()) {
@@ -18,7 +23,12 @@ export function entityTone(id: string, ids: string[]) {
     const color = used.size < entityPalette.length ? entityPalette[index] : `hsl(${(hash + assigned.size * 137.508) % 360}, 48%, 34%)`;
     used.add(index); assigned.set(key, color);
   }
-  const color = assigned.get(id) ?? colors.primary;
+  if (toneCache.size >= 32) toneCache.delete(toneCache.keys().next().value!);
+  toneCache.set(key, assigned);
+  return assigned;
+}
+export function entityTone(id: string, ids: string[]) {
+  const color = assignTones(ids).get(id) ?? colors.primary;
   const soft = color.startsWith('#') ? `${color}18` : color.replace('34%', '94%');
   return { color, soft };
 }

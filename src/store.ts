@@ -13,6 +13,7 @@ let view = { data: saved, ready: false, error: '', syncing: false, undo: null as
 let undoTimer: ReturnType<typeof setTimeout> | undefined;
 const listeners = new Set<() => void>();
 let saveChain: Promise<void> = Promise.resolve();
+let pendingSave: Promise<void> | undefined;
 let durable = true;
 let syncing: Promise<void> | undefined;
 let syncTimer: ReturnType<typeof setTimeout> | undefined;
@@ -23,6 +24,8 @@ const id = () => Crypto.randomUUID();
 const shopId = () => Array.from(Crypto.getRandomBytes(20), n => CODE_ALPHABET[n & 31]).join('');
 
 function notify(update: Partial<typeof view> = {}) {
+  // Skip no-op notifications (e.g. repeated syncing/error flags) so subscribed screens don't re-render.
+  if (view.data === saved && (Object.keys(update) as (keyof typeof view)[]).every(key => Object.is(view[key], update[key]))) return;
   view = { ...view, ...update, data: saved };
   listeners.forEach(listener => listener());
 }
@@ -54,12 +57,17 @@ function persist(next: SavedState) {
   const outboxChanged = next.outbox !== saved.outbox;
   saved = next;
   notify();
-  const raw = JSON.stringify(next);
-  const write = saveChain.then(() => AsyncStorage.setItem(STORAGE_KEY, raw));
-  saveChain = write.then(() => { durable = true; }).catch(() => {
-    durable = false;
-    notify({ error: 'Could not save to this device. Keep the app open and free up some storage, then try again.' });
-  });
+  // Serialize after the UI update instead of blocking the tap, and let edits made while a save
+  // is still queued or in flight share a single write of the latest state.
+  if (!pendingSave) {
+    const queued = saveChain.then(() => { pendingSave = undefined; return AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(saved)); });
+    pendingSave = queued;
+    saveChain = queued.then(() => { durable = true; }).catch(() => {
+      durable = false;
+      notify({ error: 'Could not save to this device. Keep the app open and free up some storage, then try again.' });
+    });
+  }
+  const write = pendingSave;
   // Never send a change until its durable local copy exists.
   void write.then(() => {
     // Use a bounded window so continuous edits cannot postpone syncing forever.
@@ -144,8 +152,10 @@ function refreshWatchers() {
 
 export const getShopSnapshot = () => view;
 
+// Stable subscribe function: an inline one makes React resubscribe on every render.
+function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function useShops() {
-  return useSyncExternalStore(listener => { listeners.add(listener); return () => listeners.delete(listener); }, getShopSnapshot);
+  return useSyncExternalStore(subscribe, getShopSnapshot);
 }
 
 export const actions = {

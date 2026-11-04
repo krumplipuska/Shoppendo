@@ -203,7 +203,10 @@ export function storeInitials(name: string) {
 
 export const MAX_DONE_ITEMS = 100;
 export function doneOverflow(shop: Shop) {
-  return Object.entries(shop.items).filter(([, item]) => item.done && !item.missing && !item.deleted)
+  const done = Object.entries(shop.items).filter(([, item]) => item.done && !item.missing && !item.deleted);
+  // Runs on every save: skip the sort in the common case where nothing overflows.
+  if (done.length <= MAX_DONE_ITEMS) return [];
+  return done
     .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b)).slice(MAX_DONE_ITEMS).map(([id]) => id);
 }
 

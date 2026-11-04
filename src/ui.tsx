@@ -297,8 +297,9 @@ export function FloatingUndoButton({ label, onPress, duration }: {
     progress.value = withTiming(0, { duration, easing: MotionEasing.linear, reduceMotion: ReduceMotion.System });
     return () => cancelAnimation(progress);
   }, [duration, reducedMotion, progress]);
+  // Animate a transform instead of width: width forces a layout pass on every frame.
   const fillStyle = useAnimatedStyle(() => ({
-    width: `${progress.value * 100}%`,
+    transform: [{ scaleX: progress.value }],
   }));
   return <Animated.View entering={Platform.OS === 'web' ? undefined : FadeIn.duration(150).reduceMotion(ReduceMotion.System)} exiting={Platform.OS === 'web' ? undefined : FadeOut.duration(120).reduceMotion(ReduceMotion.System)}
     pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 40 }]}>
@@ -326,7 +327,7 @@ export const ui = StyleSheet.create({
   sheetPosition: { position: 'absolute', top: 0, left: 0, right: 0, justifyContent: 'flex-end', alignItems: 'center' },
   floatingAdd: { position: 'absolute', right: 20, bottom: 20, minHeight: 56, paddingHorizontal: 20, borderRadius: 28, backgroundColor: c.primary, flexDirection: 'row', alignItems: 'center', gap: 8, elevation: 8, shadowColor: c.text, shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
   floatingUndo: { position: 'absolute', left: 20, bottom: 20, borderRadius: 24, overflow: 'hidden', elevation: 6, shadowColor: c.text, shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
-  floatingUndoFill: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: c.primary },
+  floatingUndoFill: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, transformOrigin: 'left', backgroundColor: c.primary },
   floatingUndoContent: { zIndex: 1, minHeight: 48, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 },
   floatingUndoLabel: { fontSize: 14 },
   sheet: { width: '100%', maxWidth: 520, maxHeight: '90%', backgroundColor: c.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 40, gap: 14 },
