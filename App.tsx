@@ -1028,9 +1028,10 @@ const s = StyleSheet.create({
   orderNumberText: { fontFamily: f.medium, fontSize: 13, color: c.muted, fontVariant: ['tabular-nums'] },
   itemArrival: { position: 'absolute', left: 12, right: 12, top: 0, zIndex: 1000, elevation: 40, backgroundColor: c.white, borderRadius: 12, borderWidth: 1, borderColor: c.border, minHeight: 54, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: c.text, shadowOpacity: 0.15, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   orderStoreLabel: { fontFamily: f.medium, color: c.muted, textTransform: 'uppercase', fontSize: 12, marginVertical: 10 },
-  categoryOrderRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 6, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
+  categoryOrderRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingVertical: 10, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
   categoryRowLabel: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 42, gap: 12 },
-  categoryRowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingLeft: 10 },
+  // Inset both sides: the row content is absolutely positioned, so the card's own padding doesn't apply.
+  categoryRowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingLeft: 10, paddingRight: 10 },
   liftedCard: { flex: 1, borderColor: '#85A67D' },
   orderIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   orderGrip: { width: 12, height: 20, flexDirection: 'row', flexWrap: 'wrap', alignContent: 'center', justifyContent: 'center', gap: 4 },
