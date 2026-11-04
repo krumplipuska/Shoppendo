@@ -17,6 +17,11 @@ let pendingSave: Promise<void> | undefined;
 let durable = true;
 let syncing: Promise<void> | undefined;
 let syncTimer: ReturnType<typeof setTimeout> | undefined;
+// Each sync costs Firestore reads and writes, so group edits: send once the user has paused for
+// SYNC_QUIET_MS, but never later than SYNC_MAX_MS after the first unsent edit.
+export const SYNC_QUIET_MS = 2000;
+export const SYNC_MAX_MS = 6000;
+let syncDeadline = 0;
 let loaded: Promise<void> | undefined;
 const watchers = new Map<string, () => void>();
 const starting = new Set<string>();
@@ -70,11 +75,10 @@ function persist(next: SavedState) {
   const write = pendingSave;
   // Never send a change until its durable local copy exists.
   void write.then(() => {
-    // Use a bounded window so continuous edits cannot postpone syncing forever.
+    // Each new edit restarts the quiet window, but the deadline from the first edit caps it,
+    // so continuous edits cannot postpone syncing forever.
     // Remote snapshots and local preferences must not flush pending edits early.
-    if (outboxChanged && saved.outbox.length && !syncTimer) {
-      syncTimer = setTimeout(() => { syncTimer = undefined; void flush(); }, 750);
-    }
+    if (outboxChanged && saved.outbox.length) scheduleSync();
   }).catch(() => {});
   return write;
 }
@@ -100,6 +104,13 @@ export async function load() {
     }
   })();
   return loaded;
+}
+
+function scheduleSync() {
+  const now = Date.now();
+  if (!syncTimer) syncDeadline = now + SYNC_MAX_MS;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => { syncTimer = undefined; void flush(); }, Math.max(0, Math.min(SYNC_QUIET_MS, syncDeadline - now)));
 }
 
 export function flush() {
@@ -142,7 +153,8 @@ function refreshWatchers() {
     if (watchers.has(shop.id) || starting.has(shop.id) || saved.outbox.some(w => w.shopId === shop.id && w.target === 'shop' && w.data.createdAt)) continue;
     starting.add(shop.id);
     void watchShop(shop, (target, data) => {
-      void persist(mergeRemote(saved, shop.id, target, data)).catch(() => {});
+      const next = mergeRemote(saved, shop.id, target, data);
+      if (next !== saved) void persist(next).catch(() => {});
     }, error => notify({ error: errorMessage(error) })).then(stop => {
       if (saved.shops.some(s => s.id === shop.id && s.shared)) watchers.set(shop.id, stop);
       else stop();

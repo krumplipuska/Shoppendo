@@ -89,7 +89,7 @@ export function edit(state: SavedState, write: Write): SavedState {
 
 // Replay unsent changes over remote snapshots so an older snapshot cannot erase offline edits.
 export function mergeRemote(state: SavedState, shopId: string, target: Write['target'], data: Record<string, unknown>): SavedState {
-  return {
+  const next: SavedState = {
     ...state,
     shops: state.shops.map(shop => {
       if (shop.id !== shopId) return shop;
@@ -98,9 +98,39 @@ export function mergeRemote(state: SavedState, shopId: string, target: Write['ta
           ...(data.groups && data.items ? { groups: data.groups as Shop['groups'], items: data.items as Shop['items'] } : {}) }
         : { ...shop, [target]: data };
       for (const write of state.outbox.filter(w => w.shopId === shopId)) merged = applyWrite(merged, write);
-      return merged;
+      return keepUnchanged(shop, merged);
     }),
   };
+  // A snapshot that only echoes what this phone already has changes nothing: keep the same state
+  // so the store skips the local save and screens skip re-rendering.
+  return next.shops.every((shop, index) => shop === state.shops[index]) ? state : next;
+}
+
+const sameFields = (a: object, b: object) => {
+  const x = a as Record<string, unknown>, y = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
+  for (const key of keys) if (!Object.is(x[key], y[key])) return false;
+  return true;
+};
+function keepUnchangedRecords<T extends object>(previous: Record<string, T>, next: Record<string, T>) {
+  let changed = Object.keys(previous).length !== Object.keys(next).length;
+  const result: Record<string, T> = {};
+  for (const [id, value] of Object.entries(next)) {
+    const old = Object.hasOwn(previous, id) ? previous[id] : undefined;
+    if (old && sameFields(old, value)) result[id] = old;
+    else { result[id] = value; changed = true; }
+  }
+  return changed ? result : previous;
+}
+// Reuse unchanged groups, items and the order array so memoized rows don't re-render.
+function keepUnchanged(previous: Shop, next: Shop): Shop {
+  const groups = keepUnchangedRecords(previous.groups, next.groups);
+  const items = keepUnchangedRecords(previous.items, next.items);
+  const groupOrder = previous.groupOrder.length === next.groupOrder.length && previous.groupOrder.every((id, i) => id === next.groupOrder[i])
+    ? previous.groupOrder : next.groupOrder;
+  if (groups === previous.groups && items === previous.items && groupOrder === previous.groupOrder
+    && previous.name === next.name && previous.createdAt === next.createdAt && previous.shared === next.shared) return previous;
+  return { ...next, groups, items, groupOrder };
 }
 
 export function acknowledge(state: SavedState, writeIds: string[]): SavedState {

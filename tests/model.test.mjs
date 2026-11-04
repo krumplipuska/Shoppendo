@@ -460,3 +460,15 @@ test('missing items persist separately and return to their picking order when re
   assert.deepEqual(listItems(restored.shops[0]).map(([id]) => id), ['apple', 'loaf']);
   assert.deepEqual(missingItems(restored.shops[0]), []);
 });
+
+test('remote snapshots that echo local data keep the same state; changes reuse untouched records', () => {
+  const data = state();
+  const local = data.shops[0];
+  const echo = { name: local.name, groupOrder: [...local.groupOrder], groups: structuredClone(local.groups), items: structuredClone(local.items) };
+  assert.equal(mergeRemote(data, code, 'shop', echo), data, 'an identical snapshot is a no-op');
+  const changed = mergeRemote(data, code, 'shop', { ...echo, items: { ...echo.items, apple: { ...echo.items.apple, done: true } } });
+  assert.notEqual(changed, data);
+  assert.equal(changed.shops[0].items.apple.done, true);
+  assert.equal(changed.shops[0].items.loaf, local.items.loaf, 'untouched items keep their identity');
+  assert.equal(changed.shops[0].groups, local.groups, 'untouched groups keep their identity');
+});

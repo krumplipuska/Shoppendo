@@ -33,7 +33,7 @@ test('sync batches durable edits, ignores snapshot/preferences, and supports imm
     return nextResolve(specifier, context);
   } });
   t.after(() => { hook.deregister(); delete globalThis.storeTest; });
-  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const settle = () => new Promise(resolve => setImmediate(resolve));
   const { actions, load, flush } = await import('../src/store.ts');
   await load(); await settle();
@@ -47,32 +47,41 @@ test('sync batches durable edits, ignores snapshot/preferences, and supports imm
   state.receive('shop', shop);
   await settle();
   assert.equal(state.sends.length, 0);
-  t.mock.timers.tick(249); await settle();
-  assert.equal(state.sends.length, 0);
+  t.mock.timers.tick(1999); await settle();
+  assert.equal(state.sends.length, 0, 'a new edit restarts the quiet window; snapshots and preferences do not');
   t.mock.timers.tick(1); await settle();
-  assert.equal(state.sends.length, 1, 'later edits do not reset the window');
+  assert.equal(state.sends.length, 1, 'edits made close together are sent once the user pauses');
   assert.equal(state.sends[0].length, 2);
   assert.equal(JSON.parse(state.raw).outbox.length, 0);
 
+  // Edits every 1.5 s never leave a 2 s pause, so only the 6 s deadline sends them.
+  for (let i = 0; i < 3; i++) { actions.toggleItem(shop.id, 'apple'); await settle(); t.mock.timers.tick(1500); await settle(); }
+  actions.toggleItem(shop.id, 'apple'); await settle();
+  t.mock.timers.tick(1499); await settle();
+  assert.equal(state.sends.length, 1, 'continuous edits keep batching');
+  t.mock.timers.tick(1); await settle();
+  assert.equal(state.sends.length, 2, 'continuous edits are sent by the deadline after the first one');
+  assert.equal(state.sends[1].length, 4);
+
   actions.renameItem(shop.id, 'apple', ' Green apple ');
   actions.renameShop(shop.id, shop.name);
-  await settle(); t.mock.timers.tick(750); await settle();
-  assert.equal(state.sends.length, 1, 'unchanged names are not queued');
+  await settle(); t.mock.timers.tick(6000); await settle();
+  assert.equal(state.sends.length, 2, 'unchanged names are not queued');
 
   actions.toggleItem(shop.id, 'apple');
   await flush(); await settle();
-  assert.equal(state.sends.length, 2, 'explicit flush bypasses the timer');
+  assert.equal(state.sends.length, 3, 'explicit flush bypasses the timer');
   actions.toggleItem(shop.id, 'apple'); await settle();
   state.onAppState('background'); await settle();
-  assert.equal(state.sends.length, 3, 'background transition flushes pending edits');
+  assert.equal(state.sends.length, 4, 'background transition flushes pending edits');
 
   state.failSave = true;
   actions.toggleItem(shop.id, 'apple'); await settle();
   await flush();
-  assert.equal(state.sends.length, 3, 'failed local save must not reach Firebase');
+  assert.equal(state.sends.length, 4, 'failed local save must not reach Firebase');
   state.failSave = false;
   await actions.retry(); await settle();
-  assert.equal(state.sends.length, 4);
+  assert.equal(state.sends.length, 5);
   assert.equal(JSON.parse(state.raw).outbox.length, 0);
 
   assert.equal(actions.toggleItem(shop.id, 'apple'), true);
