@@ -885,7 +885,6 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
             }} onBlur={() => setEditingStore(false)} /> : <Text accessibilityRole="header" numberOfLines={1} style={s.title}>{shop.name}</Text>}
         </View>
         <View style={s.headerActions}>
-          <IconButton icon="categories" label="Categories" onPress={startSorting} />
           <IconButton icon="share" label="Share shop" onPress={() => { setMenuOpen(false); setSharing(true); }} />
           <IconButton icon="more" label="Store settings" onPress={() => setMenuOpen(!menuOpen)} />
         </View>
@@ -897,6 +896,12 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
         <View style={s.statusDivider} />
         <View style={s.statusBadge}><Icon name="check" size={15} /><Text style={[s.statusCount, { color: c.primary }]}>{completed.length} done</Text></View>
       </View>
+      <Pressable accessibilityRole="button" accessibilityLabel="Store order, edit picking order" onPress={startSorting}
+        style={({ pressed }) => [s.storeOrderBar, pressed && { opacity: 0.7 }]}>
+        <Icon name="groupSort" size={20} color={c.text} />
+        <Text style={[s.storeOrderLabel, s.flex]}>Store order</Text>
+        <Text style={s.storeOrderEdit}>Edit</Text>
+      </Pressable>
       {menuOpen && <View style={s.menuPosition}><EditingRegion onDismiss={() => setMenuOpen(false)}>
         <Animated.View entering={fadeIn} style={s.viewMenu}>
           <Pressable accessibilityRole="button" style={s.menuOption} onPress={() => { setMenuOpen(false); setEditingStore(true); }}>
@@ -1117,6 +1122,9 @@ const s = StyleSheet.create({
   itemName: { fontFamily: f.medium, fontSize: 18, color: c.text, lineHeight: 23 }, doneName: { color: c.muted, textDecorationLine: 'line-through' },
   emptyGroup: { minHeight: 44, justifyContent: 'center', paddingLeft: 25 }, noGroups: { gap: 10, paddingVertical: 26 },
   addGroup: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 48, marginTop: 2 },
+  storeOrderBar: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48, paddingHorizontal: 14, marginTop: 4, borderRadius: 14, backgroundColor: c.primarySoft },
+  storeOrderLabel: { fontFamily: f.medium, fontSize: 15, color: c.text },
+  storeOrderEdit: { fontFamily: f.semibold, fontSize: 15, color: c.primary },
   statusSummary: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingVertical: 4 },
   statusCount: { fontFamily: f.semibold, fontSize: 14, color: c.text },
   statusDivider: { width: 1, height: 20, backgroundColor: c.border },
