@@ -735,7 +735,7 @@ function AddItem({ shop, close, initialCategory, editingId, onAdded }: { shop: S
   };
   return <Sheet visible compact canSwipeDown={() => scrollY.current <= 1} title={addingCategory ? 'Add category' : editing ? 'Edit item' : 'Add item'} onShow={focusInput} onClose={() => { Keyboard.dismiss(); close(); }}><EditingRegion style={{ flexShrink: 1 }}>
     {addingCategory ? <NewCategory embedded scrollOffset={scrollY} shop={shop} created={id => { setCategory(id); }}
-      close={() => { setAddingCategory(false); scrollY.current = 0; focusInput(); }} /> : <View style={s.itemComposer}><ScrollView onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16} style={{ maxHeight: 260, flexShrink: 1 }} keyboardShouldPersistTaps="handled" nestedScrollEnabled bounces={false}>
+      close={() => { setAddingCategory(false); scrollY.current = 0; focusInput(); }} /> : <View style={s.itemComposer}><ScrollView onScroll={event => { scrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16} style={s.composerScroll} contentContainerStyle={s.composerScrollContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled bounces={false}>
       <View style={s.composerInput}><InlineInput inputRef={input} label={editing ? "Edit item name" : "New item name"} placeholder={editing ? "Item name" : "Add item…"} keepOpen={!editing} submitLabel={editing ? "Save item" : "Add item"} onAdd={add}
         value={query} onValueChange={type} /></View>
       {suggestions.length > 0 && <ScrollView style={s.suggestions} keyboardShouldPersistTaps="handled" nestedScrollEnabled bounces={false}>{suggestions.map(option => <Pressable key={option.name}
@@ -1082,6 +1082,9 @@ const s = StyleSheet.create({
   storeHeading: { alignItems: 'flex-start', gap: 2 },
   itemPanel: { backgroundColor: c.white, borderWidth: ITEM_PANEL_BORDER, borderColor: c.border, borderRadius: 14 },
   itemComposer: { paddingBottom: 4, flexShrink: 1 },
+  // Span the sheet's 24pt side padding so the scrollbar sits in the margin, not on the input or tiles.
+  composerScroll: { maxHeight: 260, flexShrink: 1, marginHorizontal: -24 },
+  composerScrollContent: { paddingHorizontal: 24 },
   composerInput: { borderWidth: 1.5, borderColor: c.primary, borderRadius: 14, paddingHorizontal: 6, overflow: 'hidden', marginBottom: 6 },
   menuPosition: { position: 'absolute', top: 62, right: 12, zIndex: 20 },
   viewMenu: { width: 208, padding: 8, backgroundColor: c.white, borderRadius: 14, borderWidth: 1, borderColor: c.border, elevation: 8, shadowColor: c.text, shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: 4 } },
