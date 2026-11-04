@@ -615,21 +615,22 @@ function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: stri
   const dragList = useListDrag(order, chosen => { const next = dragOrder(order, chosen); if (next !== order) change(next); }, 'manual', CATEGORY_GAP);
   const page = usePageBack(close, !dragList.dragging && !editor);
   return <ItemDragContext.Provider value={dragList}><GestureDetector gesture={page.edge} touchAction="pan-y"><Animated.View style={[s.flex, s.shopPage, page.style]}>
-    <View style={s.listHeader}><GestureDetector gesture={page.header} touchAction="none"><View style={s.pageHeader}>
-      <Pressable accessibilityRole="button" accessibilityLabel={`Back to ${shop.name}`} onPress={page.close} style={s.headerBack}>
-        <Icon name="back" />
+    <GestureDetector gesture={page.header} touchAction="none"><View style={s.orderHeader}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Back to ${shop.name}`} onPress={page.close} style={s.orderBack} hitSlop={8}>
+        <Icon name="back" size={20} color={c.text} /><Text numberOfLines={1} style={s.orderBackLabel}>{shop.name}</Text>
       </Pressable>
-      <View style={s.headerCopy}>
-        <Text accessibilityRole="header" style={s.title}>Categories</Text>
-        <Text style={s.caption}>Change picking order</Text>
+      <Text accessibilityRole="header" style={s.orderTitle}>Picking order</Text>
+      <Text style={s.orderSubtitle}>Drag categories to match your route.</Text>
+      <View style={s.orderSectionRow}>
+        <Text numberOfLines={1} style={s.orderSection}>For {shop.name}</Text>
+        <Text numberOfLines={1} style={s.orderSectionNote}>Each store keeps its own order.</Text>
       </View>
     </View></GestureDetector>
-    </View>
     <GestureDetector gesture={page.body} touchAction="pan-y"><View style={s.categoryOrderPage}>
-    <ShopScroll page={page} horizontalPadding={0}>
-      <View style={{ gap: CATEGORY_GAP }}>{order.map(id => <CategoryOrderRow key={id} shop={shop} id={id} order={order} change={change} edit={() => setEditor(id)} />)}</View>
+    <ShopScroll page={page} horizontalPadding={16}>
+      <View style={{ gap: CATEGORY_GAP }}>{order.map((id, index) => <CategoryOrderRow key={id} shop={shop} id={id} index={index} order={order} change={change} edit={() => setEditor(id)} />)}</View>
       <ListTail shopId={shop.id} kind="group" last={order.at(-1)} />
-      {!order.length && <Text style={s.caption}>Add your first category to organize this store.</Text>}
+      {!order.length && <Text style={[s.caption, { marginBottom: 12 }]}>Add your first category to organize this store.</Text>}
     </ShopScroll>
     </View></GestureDetector>
     {!editor && <FloatingAddButton label="Add category" onPress={() => setEditor('new')} />}
@@ -637,7 +638,7 @@ function CategoryOrder({ shop, draft, change, close }: { shop: Shop; draft: stri
   </Animated.View></GestureDetector></ItemDragContext.Provider>;
 }
 
-function CategoryOrderRow({ shop, id, order, change, edit }: { shop: Shop; id: string; order: string[]; change: (order: string[]) => void; edit: () => void }) {
+function CategoryOrderRow({ shop, id, index, order, change, edit }: { shop: Shop; id: string; index: number; order: string[]; change: (order: string[]) => void; edit: () => void }) {
   const drag = useHoldDrag();
   const preview = useContext(ItemDragContext);
   const token = useRef(0);
@@ -652,6 +653,7 @@ function CategoryOrderRow({ shop, id, order, change, edit }: { shop: Shop; id: s
   const grip = <View accessible={false} style={s.orderGrip}>{[0, 1, 2, 3, 4, 5].map(dot => <View key={dot} style={s.gripDot} />)}</View>;
   const gripSlot = { height: 40, justifyContent: 'center' as const, alignItems: 'center' as const };
   const content = <>
+    <View style={s.orderNumber}><Text style={s.orderNumberText}>{index + 1}</Text></View>
     <View style={[s.orderIcon, { backgroundColor: tone.soft }]}><Icon name={group.icon ?? 'bag'} color={tone.color} /></View>
     <Text style={[s.groupName, s.flex]}>{group.name}</Text>
   </>;
@@ -665,7 +667,7 @@ function CategoryOrderRow({ shop, id, order, change, edit }: { shop: Shop; id: s
     draggingStyle={s.itemDragOrigin} dragReleasedStyle={s.itemDragOrigin}>
     <Animated.View style={motion}><SwipeToDelete label={group.name} onDelete={() => actions.deleteGroup(shop.id, id)} disabled={drag.active} onSwipeStart={drag.suppress} onSwipeEnd={drag.stop} activeOffsetX={8} failOffsetY={32} touchAction="pan-x">{action =>
       <View style={s.categoryOrderRow}><DraxHandle style={StyleSheet.absoluteFill}><View style={s.categoryRowInner} pointerEvents="box-none">
-        <Pressable style={s.categoryRowLabel} accessibilityRole="button" accessibilityLabel={`Edit ${group.name} category`} accessibilityHint="Tap to edit. Hold anywhere to drag. Swipe left to delete. Alt+Up or Alt+Down also moves the category."
+        <Pressable style={s.categoryRowLabel} accessibilityRole="button" accessibilityLabel={`${index + 1}. Edit ${group.name} category`} accessibilityHint="Tap to edit. Hold anywhere to drag. Swipe left to delete. Alt+Up or Alt+Down also moves the category."
           onPress={() => { if (!drag.held.current) edit(); }}
           accessibilityActions={[{ name: 'delete', label: 'Delete category' }, { name: 'increment', label: 'Move later' }, { name: 'decrement', label: 'Move earlier' }]}
           onAccessibilityAction={event => { if (event.nativeEvent.actionName === 'delete') actions.deleteGroup(shop.id, id); else move(event.nativeEvent.actionName === 'increment' ? 1 : -1); }}
@@ -1008,12 +1010,22 @@ export default function App() {
 }
 
 const s = StyleSheet.create({
-  categoryOrderPage: { flex: 1, backgroundColor: c.background, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12, gap: 8 },
+  categoryOrderPage: { flex: 1, backgroundColor: c.background, paddingTop: 4, paddingBottom: 12, gap: 8 },
+  orderHeader: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 6, backgroundColor: c.background, zIndex: 10 },
+  orderBack: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44, alignSelf: 'flex-start', maxWidth: '100%' },
+  orderBackLabel: { flexShrink: 1, fontFamily: f.medium, fontSize: 17, color: c.text },
+  orderTitle: { fontFamily: f.bold, fontSize: 32, lineHeight: 40, color: c.text, marginTop: 12 },
+  orderSubtitle: { fontFamily: f.regular, fontSize: 16, lineHeight: 22, color: c.muted, marginTop: 4 },
+  orderSectionRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginTop: 26 },
+  orderSection: { flexShrink: 1, fontFamily: f.medium, fontSize: 13, letterSpacing: 0.6, color: c.muted, textTransform: 'uppercase' },
+  orderSectionNote: { flexShrink: 1, fontFamily: f.regular, fontSize: 13, color: c.muted, textAlign: 'right' },
+  orderNumber: { width: 30, height: 30, borderRadius: 8, backgroundColor: c.header, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center' },
+  orderNumberText: { fontFamily: f.medium, fontSize: 13, color: c.muted, fontVariant: ['tabular-nums'] },
   itemArrival: { position: 'absolute', left: 12, right: 12, top: 0, zIndex: 1000, elevation: 40, backgroundColor: c.white, borderRadius: 12, borderWidth: 1, borderColor: c.border, minHeight: 54, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: c.text, shadowOpacity: 0.15, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   orderStoreLabel: { fontFamily: f.medium, color: c.muted, textTransform: 'uppercase', fontSize: 12, marginVertical: 10 },
   categoryOrderRow: { minHeight: 62, flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 6, backgroundColor: c.white, borderWidth: 1, borderColor: c.border, borderRadius: 14 },
   categoryRowLabel: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 42, gap: 12 },
-  categoryRowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingLeft: 16 },
+  categoryRowInner: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingLeft: 10 },
   liftedCard: { flex: 1, borderColor: '#85A67D' },
   orderIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   orderGrip: { width: 12, height: 20, flexDirection: 'row', flexWrap: 'wrap', alignContent: 'center', justifyContent: 'center', gap: 4 },
