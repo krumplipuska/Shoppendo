@@ -99,4 +99,9 @@ test('sync batches durable edits, ignores snapshot/preferences, and supports imm
   saved = JSON.parse(state.raw).shops[0];
   assert.equal(saved.items.apple.deleted, false, 'undo brings the items back');
   assert.equal(saved.items.apple.done, true, 'undo keeps each item\'s done state');
+
+  actions.clearItems(shop.id, 'missing'); await settle();
+  assert.equal(JSON.parse(state.raw).shops[0].items.apple.deleted, false, 'Remove missing leaves done items');
+  actions.clearItems(shop.id, 'done'); await settle();
+  assert.equal(JSON.parse(state.raw).shops[0].items.apple.deleted, true, 'Remove done hides done items');
 });

@@ -293,18 +293,20 @@ export const actions = {
     update({ shopId, target: 'items', entityId: itemId, data: { deleted: true, updatedAt: Date.now() } });
     offerUndo(`${item.name} deleted`, () => update({ shopId, target: 'items', entityId: itemId, data: { deleted: false, updatedAt: Date.now() } }));
   },
-  // Empty the list: hide every item in a live category without erasing it. Names stay available
-  // as suggestions, and categories, order and each item's done/missing state are kept for undo.
-  clearItems(shopId: string) {
+  // Empty the list (or just its Missing or Done section): hide those items in live categories without
+  // erasing them. Names stay available as suggestions; categories, order and each item's state are kept for undo.
+  clearItems(shopId: string, section: 'all' | 'missing' | 'done' = 'all') {
     const shop = saved.shops.find(s => s.id === shopId);
     if (!shop) return;
     const ids = Object.entries(shop.items)
-      .filter(([, item]) => !item.deleted && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted).map(([itemId]) => itemId);
+      .filter(([, item]) => !item.deleted && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted
+        && (section === 'all' || (section === 'missing' ? item.missing : item.done && !item.missing))).map(([itemId]) => itemId);
     if (!ids.length) return;
     let next = saved;
     for (const entityId of ids) next = edit(next, { id: id(), shopId, target: 'items', entityId, data: { deleted: true, updatedAt: Date.now() } });
     void persist(next).catch(() => {});
-    offerUndo(`${ids.length} ${ids.length === 1 ? 'item' : 'items'} removed`, () => {
+    const kind = section === 'all' ? '' : `${section} `;
+    offerUndo(`${ids.length} ${kind}${ids.length === 1 ? 'item' : 'items'} removed`, () => {
       const current = saved.shops.find(s => s.id === shopId);
       if (!current) return;
       let restored = saved;
