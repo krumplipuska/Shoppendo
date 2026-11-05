@@ -254,16 +254,25 @@ export function doneOverflow(shop: Shop) {
     .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b)).slice(MAX_DONE_ITEMS).map(([id]) => id);
 }
 
-export function missingItems(shop: Shop) {
-  return Object.entries(shop.items)
-    .filter(([, item]) => item.missing && !item.deleted && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted)
-    .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b));
+// Picking order: by the store's category order, then each item's position within its category.
+function inStoreOrder(shop: Shop, entries: [string, Item][]) {
+  const groups = orderedGroups(shop);
+  const rank = new Map(groups.map((id, index) => [id, index]));
+  const groupRank = (item: Item) => rank.get(item.groupId) ?? groups.length;
+  return entries.sort(([a, x], [b, y]) => groupRank(x) - groupRank(y)
+    || (x.position ?? x.createdAt) - (y.position ?? y.createdAt) || a.localeCompare(b));
 }
 
+export function missingItems(shop: Shop) {
+  return inStoreOrder(shop, Object.entries(shop.items)
+    .filter(([, item]) => item.missing && !item.deleted && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted));
+}
+
+// Keeps the newest MAX_DONE_ITEMS completions, shown in picking order.
 export function doneItems(shop: Shop) {
-  return Object.entries(shop.items)
+  return inStoreOrder(shop, Object.entries(shop.items)
     .filter(([, item]) => item.done && !item.missing && !item.deleted && !shop.groups[item.groupId]?.deleted)
-    .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b)).slice(0, MAX_DONE_ITEMS);
+    .sort(([a, x], [b, y]) => y.updatedAt - x.updatedAt || a.localeCompare(b)).slice(0, MAX_DONE_ITEMS));
 }
 
 export function isGroup(value: unknown): value is Group {

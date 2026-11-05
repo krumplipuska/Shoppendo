@@ -293,6 +293,27 @@ export const actions = {
     update({ shopId, target: 'items', entityId: itemId, data: { deleted: true, updatedAt: Date.now() } });
     offerUndo(`${item.name} deleted`, () => update({ shopId, target: 'items', entityId: itemId, data: { deleted: false, updatedAt: Date.now() } }));
   },
+  // Empty the list: hide every item in a live category without erasing it. Names stay available
+  // as suggestions, and categories, order and each item's done/missing state are kept for undo.
+  clearItems(shopId: string) {
+    const shop = saved.shops.find(s => s.id === shopId);
+    if (!shop) return;
+    const ids = Object.entries(shop.items)
+      .filter(([, item]) => !item.deleted && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted).map(([itemId]) => itemId);
+    if (!ids.length) return;
+    let next = saved;
+    for (const entityId of ids) next = edit(next, { id: id(), shopId, target: 'items', entityId, data: { deleted: true, updatedAt: Date.now() } });
+    void persist(next).catch(() => {});
+    offerUndo(`${ids.length} ${ids.length === 1 ? 'item' : 'items'} removed`, () => {
+      const current = saved.shops.find(s => s.id === shopId);
+      if (!current) return;
+      let restored = saved;
+      for (const entityId of ids) {
+        if (current.items[entityId]?.deleted) restored = edit(restored, { id: id(), shopId, target: 'items', entityId, data: { deleted: false, updatedAt: Date.now() } });
+      }
+      if (restored !== saved) void persist(restored).catch(() => {});
+    });
+  },
   async share(shopId: string) {
     if (!firebaseConfigured) throw new Error('Shop sharing is not connected yet. Your lists still work on this phone.');
     const shop = saved.shops.find(s => s.id === shopId)!;

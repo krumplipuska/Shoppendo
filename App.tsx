@@ -938,6 +938,12 @@ function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; 
           <Pressable accessibilityRole="button" accessibilityLabel="Share shop ID" style={[s.menuOption, s.menuShare]} onPress={() => { setMenuOpen(false); setSharing(true); }}>
             <Text style={[s.link, s.flex]}>Share shop ID</Text><Icon name="share" size={18} />
           </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Remove all items from the list" accessibilityHint="Empties the list. You can undo right after."
+            disabled={!(flatItems.length + missing.length + completed.length)} style={({ pressed }) => [s.menuOption, s.menuShare, pressed && { opacity: 0.7 },
+              !(flatItems.length + missing.length + completed.length) && { opacity: 0.4 }]}
+            onPress={() => { setMenuOpen(false); actions.clearItems(shop.id); }}>
+            <Text style={[s.link, s.flex, { color: c.danger }]}>Remove all items</Text><Icon name="trash" size={18} color={c.danger} />
+          </Pressable>
         </Animated.View>
       </EditingRegion></View>}
     </View>

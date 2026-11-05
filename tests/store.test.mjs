@@ -88,4 +88,15 @@ test('sync batches durable edits, ignores snapshot/preferences, and supports imm
   assert.equal(actions.toggleItem(shop.id, 'apple'), false, 'a second tap uses the latest store state before a render');
   await settle(); t.mock.timers.tick(1000); await settle();
   assert.equal(JSON.parse(state.raw).shops[0].items.apple.done, false, 'rapid unchecking stays active after the move delay');
+
+  actions.toggleItem(shop.id, 'apple'); await settle();
+  actions.clearItems(shop.id); await settle();
+  let saved = JSON.parse(state.raw).shops[0];
+  assert.equal(saved.items.apple.deleted, true, 'remove all hides items');
+  assert.equal(saved.items.apple.name, 'Green apple', 'the item data is kept');
+  assert.ok(saved.groups.fruit, 'categories are kept');
+  actions.undo(); await settle();
+  saved = JSON.parse(state.raw).shops[0];
+  assert.equal(saved.items.apple.deleted, false, 'undo brings the items back');
+  assert.equal(saved.items.apple.done, true, 'undo keeps each item\'s done state');
 });

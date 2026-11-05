@@ -251,11 +251,15 @@ test('drag preview opens the correct gap in either direction and across categori
   assert.equal(shouldStartListPull(0,-40,0), false);
 });
 
-test('Done shows the newest completion first across categories', () => {
+test('Done and Missing follow the store order: category order, then position within a category', () => {
   const data = shop();
-  data.items.apple = { ...data.items.apple, done:true, updatedAt:20 };
-  data.items.loaf = { ...data.items.loaf, done:true, updatedAt:40 };
-  assert.deepEqual(doneItems(data).map(([id])=>id), ['loaf','apple']);
+  data.groupOrder = ['bread', 'fruit'];
+  data.items.apple = { ...data.items.apple, done:true, updatedAt:40, position: 2048 };
+  data.items.pear = { ...item('Pears'), done:true, updatedAt:50, position: 1024 };
+  data.items.loaf = { ...data.items.loaf, done:true, updatedAt:20 };
+  assert.deepEqual(doneItems(data).map(([id])=>id), ['loaf','pear','apple'], 'not by completion time');
+  for (const id of ['apple', 'pear', 'loaf']) data.items[id] = { ...data.items[id], done: false, missing: true };
+  assert.deepEqual(missingItems(data).map(([id])=>id), ['loaf','pear','apple']);
 });
 
 test('active list sorting supports group order, case-insensitive names, and time added', () => {
@@ -302,7 +306,7 @@ test('Done retains the newest 100 and pruning never removes active items or othe
   assert.equal(MAX_DONE_ITEMS,100);
   assert.deepEqual(doneOverflow(data), ['done2','done1','done0']);
   assert.equal(doneItems(data).length,100);
-  assert.equal(doneItems(data)[0][0],'done102');
+  assert.ok(!doneItems(data).some(([id]) => ['done0','done1','done2'].includes(id)), 'Done keeps the newest 100 completions');
   let saved = { ...emptyState(), shops:[data,{...shop(),id:'other-shop'}] };
   for (const entityId of doneOverflow(data)) saved = edit(saved, write('trim'+entityId,'items',entityId,{deleted:true,updatedAt:1000}));
   assert.deepEqual(doneOverflow(saved.shops[0]),[]);
