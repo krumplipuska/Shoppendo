@@ -8,7 +8,7 @@ import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-worklets';
 import Animated, { Easing as MotionEasing, FadeIn, FadeOut, ReduceMotion, useReducedMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
 
-export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'copy' | 'close' | 'trash' | 'missing' | 'undo' | 'more' | 'groupSort' | 'categories' | 'grip' | GroupIcon;
+export type IconName = 'plus' | 'check' | 'back' | 'down' | 'right' | 'share' | 'copy' | 'close' | 'trash' | 'missing' | 'undo' | 'more' | 'groupSort' | 'categories' | 'grip' | 'info' | GroupIcon;
 export type InputHandle = React.ComponentRef<typeof TextInput>;
 type Dismiss = () => void | boolean;
 const EditingContext = createContext<Map<symbol, Dismiss> | null>(null);
@@ -57,6 +57,7 @@ const paths: Record<Exclude<IconName, 'more'>, string> = {
   groupSort: 'M4 5v14m-3-3 3 3 3-3M10 5h11M10 12h8M10 19h5',
   categories: 'M2 21h11a3 3 0 0 0 0-6H6a3 3 0 0 1 0-6h4m-2-2 2 2-2 2M12 3h2l2 8h5l2-6h-8M17 14h.01M21 14h.01',
   grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
+  info: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM12 11v5M12 8h.01',
   plus: 'M12 5v14M5 12h14', check: 'm5 12 4 4L19 6', back: 'm14 5-7 7 7 7', down: 'm7 10 5 5 5-5', right: 'm9 6 6 6-6 6',
   undo: 'M3 7v6h6M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.7 2.9L3 13',
   share: 'M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8', close: 'm6 6 12 12M6 18 18 6', bag: 'M5 7h14l1 14H4L5 7ZM8 8V6a4 4 0 0 1 8 0v2',
