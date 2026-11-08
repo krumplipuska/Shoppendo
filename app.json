@@ -15,7 +15,20 @@
       "associatedDomains": ["applinks:shoppendo-1a86c.web.app"]
     },
     "android": {
-      "package": "com.tamasbagyinszki.shoppendo.dev",
+      "package": "com.tamasbagyinszki.shoppendo",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png",
+        "backgroundColor": "#4FA89A"
+      },
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.RECORD_AUDIO"
+      ],
       "predictiveBackGestureEnabled": false,
       "intentFilters": [{
         "action": "VIEW",

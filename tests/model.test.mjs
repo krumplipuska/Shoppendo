@@ -491,3 +491,96 @@ test('adding a name finds the item already on the list first, then the latest do
   assert.equal(findListItem(data, 'milk')?.[0], 'newMissing', 'items in deleted categories are ignored');
   assert.equal(findListItem(data, 'Bread'), undefined);
 });
+
+import { closeTrip, insertionPatches, learnedSlot, learnTrip, recordCheck, TRIP_GAP_MS } from '../src/model.ts';
+
+// Learned pick-up order: checks within one trip teach "first before second" inside each category.
+const fruitShop = names => ({ ...shop(), shared: false,
+  items: Object.fromEntries(names.map((name, i) => [name.toLowerCase(), { ...item(name), position: (i + 1) * 1024 }])) });
+const check = (data, name, at, done = true, groupId = 'fruit') => recordCheck(data, code, { key: name.toLowerCase(), groupId, at, done });
+function trip(data, names, start) {
+  names.forEach((name, i) => { data = check(data, name, start + i * 1000); });
+  return closeTrip(data, start + names.length * 1000 + TRIP_GAP_MS);
+}
+const slotName = (data, name, list) => {
+  const current = fruitShop(list);
+  const before = learnedSlot(current, data.learning?.[code], name, 'fruit');
+  return before === undefined ? 'unknown' : before === null ? 'last' : current.items[before].name;
+};
+
+test('two trips teach the pick-up order, and a new item is slotted between the items around it', () => {
+  let data = { ...emptyState(), shops: [fruitShop([])] };
+  data = trip(data, ['Apples', 'Bananas', 'Pears'], 0);
+  data = trip(data, ['Apples', 'Bananas', 'Pears'], 10 * TRIP_GAP_MS);
+  assert.equal(data.trip, undefined);
+  assert.equal(slotName(data, 'Bananas', ['Apples', 'Pears']), 'Pears');
+  assert.equal(slotName(data, 'apples ', ['Pears', 'Bananas']), 'Pears');
+  assert.equal(slotName(data, 'Pears', ['Bananas', 'Apples']), 'last');
+  // The position patch actually lands between the neighbours.
+  const current = fruitShop(['Apples', 'Pears']);
+  const patch = insertionPatches(current, 'fruit', 'new', item('Bananas'), 'pears').new;
+  assert.ok(patch.position > current.items.apples.position && patch.position < current.items.pears.position);
+});
+
+test('a changed route takes over from the old order after a few trips', () => {
+  let data = { ...emptyState(), shops: [fruitShop([])] };
+  for (let i = 0; i < 3; i++) data = trip(data, ['Apples', 'Bananas', 'Pears'], i * 10 * TRIP_GAP_MS);
+  assert.equal(slotName(data, 'Pears', ['Apples']), 'last');
+  for (let i = 3; i < 6; i++) data = trip(data, ['Pears', 'Bananas', 'Apples'], i * 10 * TRIP_GAP_MS);
+  assert.equal(slotName(data, 'Pears', ['Apples']), 'Apples');
+});
+
+test('short trips, unchecked items, and a still-running trip teach nothing', () => {
+  let data = { ...emptyState(), shops: [fruitShop([])] };
+  data = trip(data, ['Apples', 'Pears'], 0);
+  assert.equal(data.learning, undefined);
+  data = check(data, 'Pears', 1000);
+  data = check(data, 'Apples', 2000);
+  data = check(data, 'Pears', 3000, false);
+  data = check(data, 'Bananas', 4000);
+  data = check(data, 'Kiwi', 5000);
+  assert.equal(closeTrip(data, 5000 + TRIP_GAP_MS - 1), data, 'the trip stays open within the gap');
+  data = closeTrip(data, 5000 + TRIP_GAP_MS);
+  assert.equal(data.learning[code].pairs.pears, undefined, 'the unchecked pick was forgotten');
+  assert.ok(data.learning[code].pairs.apples.bananas > 0);
+});
+
+test('without learning, or for unknown items, adding keeps going last', () => {
+  assert.equal(slotName(emptyState(), 'Apples', ['Pears']), 'unknown');
+  let data = { ...emptyState(), shops: [fruitShop([])] };
+  data = trip(data, ['Apples', 'Bananas', 'Pears'], 0);
+  assert.equal(slotName(data, 'Kiwi', ['Apples', 'Pears']), 'unknown');
+  assert.equal(slotName(data, 'Apples', []), 'unknown');
+});
+
+test('categories and stores learn separately, and a new store starts a new trip', () => {
+  const other = 'BCDEFGHJKLMNPQRSTUVW';
+  let data = { ...emptyState(), shops: [fruitShop([]), { ...fruitShop([]), id: other }] };
+  data = check(data, 'Apples', 0);
+  data = check(data, 'Bread', 1000, true, 'bread');
+  data = check(data, 'Pears', 2000);
+  data = recordCheck(data, other, { key: 'pears', groupId: 'fruit', at: 3000, done: true });
+  assert.equal(data.trip.shopId, other);
+  assert.ok(data.learning[code].pairs.apples.pears > 0);
+  assert.equal(data.learning[code].pairs.apples.bread, undefined);
+  assert.equal(data.learning[other], undefined);
+});
+
+test('learning forgets the least recently picked items past the cap', () => {
+  let learning;
+  for (let i = 0; i < 160; i++) learning = learnTrip(learning, [0, 1, 2].map(n => ({ key: `item ${i}-${n}`, groupId: 'fruit', at: i * 10 + n })));
+  assert.equal(Object.keys(learning.seen).length, 300);
+  assert.equal(learning.pairs['item 0-0'], undefined);
+  assert.ok(learning.pairs['item 159-0']['item 159-1'] > 0);
+});
+
+test('saved lists load with or without learned order, dropping unreadable learning instead of failing', () => {
+  const base = { ...emptyState(), shops: [fruitShop([])] };
+  assert.equal(decodeSaved(JSON.stringify(base)).learning, undefined);
+  const learned = trip(base, ['Apples', 'Bananas', 'Pears'], 0);
+  assert.deepEqual(decodeSaved(JSON.stringify(learned)).learning, learned.learning);
+  const broken = decodeSaved(JSON.stringify({ ...base, learning: { [code]: { pairs: 'x' } }, trip: { shopId: 1 } }));
+  assert.equal(broken.learning, undefined);
+  assert.equal(broken.trip, undefined);
+  assert.equal(broken.shops.length, 1);
+});

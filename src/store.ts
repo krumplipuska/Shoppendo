@@ -3,7 +3,7 @@ import * as Crypto from 'expo-crypto';
 import { AppState } from 'react-native';
 import { useSyncExternalStore } from 'react';
 import { acknowledge, CODE_ALPHABET, decodeSaved, edit, emptyState, mergeRemote, normalizeCode,
-  activeItems, doneOverflow, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, GROUP_ICONS, validName, type GroupIcon, type ItemSort, type SavedState, type Shop, type Write } from './model';
+  doneOverflow, orderedGroups, planItemMove, insertionPatches, learnedSlot, recordCheck, closeTrip, searchName, reorderShops, STARTER_GROUPS, GROUP_ICONS, validName, type GroupIcon, type Item, type ItemSort, type SavedState, type Shop, type Write } from './model';
 import { firebaseConfigured, joinRemote, publishShop, sendWrites, watchShop, stopSharing } from './firebase';
 
 const STORAGE_KEY = 'shoppendo.v1';
@@ -88,12 +88,27 @@ function update(write: Omit<Write, 'id'>) {
   if (next !== saved) void persist(next).catch(() => {});
 }
 
+// Apply position patches (from insertionPatches) plus extra fields for the placed item as item writes.
+function placeItem(state: SavedState, shopId: string, itemId: string, patches: Record<string, object>, fields: Partial<Item>) {
+  let next = edit(state, { id: id(), shopId, target: 'items', entityId: itemId, data: { ...fields, ...patches[itemId] } });
+  for (const [entityId, data] of Object.entries(patches)) {
+    if (entityId !== itemId) next = edit(next, { id: id(), shopId, target: 'items', entityId, data: { ...data, updatedAt: Date.now() } });
+  }
+  return next;
+}
+
+// Keep the check-off trip that teaches the usual pick-up order (stored on this phone only).
+function trackCheck(state: SavedState, shopId: string, item: Item, done: boolean) {
+  return recordCheck(state, shopId, { key: searchName(item.name), groupId: item.groupId, at: Date.now(), done });
+}
+
 export async function load() {
   loaded ??= (async () => {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       const restored = raw ? decodeSaved(raw) : emptyState();
-      saved = limitDone(restored);
+      // A trip left open since the last session has ended if enough time has passed.
+      saved = closeTrip(limitDone(restored), Date.now());
       if (saved !== restored) await persist(saved);
       notify({ ready: true, error: '' });
       void flush();
@@ -194,12 +209,17 @@ export const actions = {
     const pending = saved.outbox.filter(w => w.shopId === shopId);
     const groupIds = new Set(Object.keys(shop?.groups ?? {}));
     const collapsed = saved.collapsed.filter(id => groupIds.has(id));
-    void persist({ ...saved, shops: saved.shops.filter(s => s.id !== shopId), outbox: saved.outbox.filter(w => w.shopId !== shopId), collapsed: saved.collapsed.filter(id => !groupIds.has(id)) }).catch(() => {});
+    const learned = saved.learning?.[shopId];
+    const { [shopId]: _, ...learning } = saved.learning ?? {};
+    const { trip, ...rest } = saved;
+    void persist({ ...rest, ...(trip && trip.shopId !== shopId ? { trip } : {}), learning,
+      shops: saved.shops.filter(s => s.id !== shopId), outbox: saved.outbox.filter(w => w.shopId !== shopId), collapsed: saved.collapsed.filter(id => !groupIds.has(id)) }).catch(() => {});
     refreshWatchers();
     offerUndo(`${shop.name} removed`, () => {
       if (saved.shops.some(s => s.id === shopId)) return;
       const shops = [...saved.shops]; shops.splice(index, 0, shop);
-      void persist({ ...saved, shops, outbox: [...saved.outbox, ...pending], collapsed: [...new Set([...saved.collapsed, ...collapsed])] }).catch(() => {});
+      void persist({ ...saved, shops, outbox: [...saved.outbox, ...pending], collapsed: [...new Set([...saved.collapsed, ...collapsed])],
+        ...(learned ? { learning: { ...saved.learning, [shopId]: learned } } : {}) }).catch(() => {});
       refreshWatchers();
     });
   },
@@ -248,10 +268,11 @@ export const actions = {
     const shop = saved.shops.find(s => s.id === shopId);
     if (!shop?.groups[groupId] || shop.groups[groupId].deleted) throw new Error('This group is no longer available.');
     const now = Date.now();
-    const last = activeItems(shop, groupId).at(-1)?.[1];
-    const position = last ? (last.position ?? last.createdAt) + 1024 : 1024;
     const itemId = id();
-    update({ shopId, target: 'items', entityId: itemId, data: { name: validName(input), groupId, done: false, deleted: false, position, createdAt: now, updatedAt: now } });
+    const item: Item = { name: validName(input), groupId, done: false, deleted: false, createdAt: now, updatedAt: now };
+    // Slot the item where it is usually picked up; unknown items go last.
+    const beforeId = learnedSlot(shop, saved.learning?.[shopId], item.name, groupId) ?? null;
+    void persist(placeItem(saved, shopId, itemId, insertionPatches(shop, groupId, itemId, item, beforeId), item)).catch(() => {});
     return itemId;
   },
   moveItem(shopId: string, itemId: string, groupId: string, beforeId: string | null = null, allowCompleted = false) {
@@ -268,19 +289,26 @@ export const actions = {
     const item = saved.shops.find(s => s.id === shopId)?.items[itemId];
     if (!item || item.deleted) return;
     const done = !item.done;
-    update({ shopId, target: 'items', entityId: itemId, data: { done, missing: false, updatedAt: Date.now() } });
+    const next = edit(saved, { id: id(), shopId, target: 'items', entityId: itemId, data: { done, missing: false, updatedAt: Date.now() } });
+    void persist(trackCheck(next, shopId, item, done)).catch(() => {});
     return done;
   },
-  // Put a done or missing item back on the list.
+  // Put a done or missing item back on the list, in its learned place when one is known.
   restoreItem(shopId: string, itemId: string) {
-    const item = saved.shops.find(s => s.id === shopId)?.items[itemId];
-    if (!item || item.deleted) return;
-    update({ shopId, target: 'items', entityId: itemId, data: { done: false, missing: false, updatedAt: Date.now() } });
+    const shop = saved.shops.find(s => s.id === shopId);
+    const item = shop?.items[itemId];
+    if (!shop || !item || item.deleted) return;
+    const fields = { done: false, missing: false, updatedAt: Date.now() };
+    const beforeId = learnedSlot(shop, saved.learning?.[shopId], item.name, item.groupId, itemId);
+    const patches = beforeId === undefined ? {} : insertionPatches(shop, item.groupId, itemId, item, beforeId);
+    void persist(trackCheck(placeItem(saved, shopId, itemId, patches, fields), shopId, item, false)).catch(() => {});
   },
   setItemMissing(shopId: string, itemId: string, missing: boolean) {
     const item = saved.shops.find(s => s.id === shopId)?.items[itemId];
     if (!item || item.deleted) return;
-    update({ shopId, target: 'items', entityId: itemId, data: { missing, done: false, updatedAt: Date.now() } });
+    const next = edit(saved, { id: id(), shopId, target: 'items', entityId: itemId, data: { missing, done: false, updatedAt: Date.now() } });
+    // A missing item was not picked up: never learn from it.
+    void persist(trackCheck(next, shopId, item, false)).catch(() => {});
   },
   renameItem(shopId: string, itemId: string, input: string) {
     const name = validName(input);
@@ -340,7 +368,11 @@ export const actions = {
     const newId = shopId();
     watchers.get(shopIdToStop)?.();
     watchers.delete(shopIdToStop);
+    // The local copy gets a new ID: carry its learned pick-up order and open trip over.
+    const { [shopIdToStop]: learned, ...learning } = saved.learning ?? {};
     await persist({ ...saved,
+      ...(learned ? { learning: { ...learning, [newId]: learned } } : {}),
+      ...(saved.trip?.shopId === shopIdToStop ? { trip: { ...saved.trip, shopId: newId } } : {}),
       shops: saved.shops.map(shop => shop.id === shopIdToStop ? { ...shop, id: newId, shared: false } : shop),
       outbox: saved.outbox.filter(write => write.shopId !== shopIdToStop) });
     notify({ error: '' });
@@ -359,4 +391,9 @@ export const actions = {
 
 // Retry while active; flush the short batching window on app state transitions.
 setInterval(() => { if (view.ready && AppState.currentState === 'active') void flush(); }, 15000);
-AppState.addEventListener('change', () => { void flush(); });
+AppState.addEventListener('change', () => {
+  // Returning after a long break ends the previous shopping trip and learns from it.
+  const closed = view.ready ? closeTrip(saved, Date.now()) : saved;
+  if (closed !== saved) void persist(closed).catch(() => {});
+  void flush();
+});

@@ -12,3 +12,6 @@ ios/
 *-debug.log
 *.tsbuildinfo
 test-results/
+
+# Per-developer overrides (e.g. emulator settings). Shared public Firebase config lives in .env.
+.env*.local

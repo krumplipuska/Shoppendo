@@ -67,7 +67,7 @@ const STEPS = [
   { title: 'Create a store', Preview: StorePreview,
     body: 'Tap Add store, type a name, and choose Create store. New stores start with six categories. To use a list someone shared with you, choose Join by ID.' },
   { title: 'Add list items', Preview: ItemsPreview,
-    body: 'Open a store and tap Add item. Type a name, pick a category, and press Return to add the next one. Tap the checkbox once it is in your basket.' },
+    body: 'Open a store and tap Add item, pick a category, and press Return to add the next one. Tick items as they go in your basket: Shoppendo learns your usual order and places items to match next time.' },
   { title: 'Set the store order', Preview: OrderPreview,
     body: 'In a store, tap Store order, then hold and drag categories into the order of your route. Each store keeps its own order, and your list follows it.' },
 ];
@@ -102,7 +102,7 @@ const t = StyleSheet.create({
   preview: { minHeight: 206, justifyContent: 'center', padding: 14, marginBottom: 10, borderRadius: 16, backgroundColor: c.background, borderWidth: 1, borderColor: c.border },
   stepCount: { fontFamily: f.medium, fontSize: 12, letterSpacing: 0.6, textTransform: 'uppercase', color: c.muted },
   title: { fontFamily: f.bold, fontSize: 20, lineHeight: 26, color: c.text },
-  body: { minHeight: 88, fontFamily: f.regular, fontSize: 15, lineHeight: 22, color: c.muted },
+  body: { minHeight: 110, fontFamily: f.regular, fontSize: 15, lineHeight: 22, color: c.muted },
   dots: { flexDirection: 'row', justifyContent: 'center', gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: c.border },
   activeDot: { width: 18, backgroundColor: c.primary },

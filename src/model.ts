@@ -33,6 +33,11 @@ export type Write = {
   data: Record<string, unknown>;
 };
 export type ItemSort = 'group' | 'name' | 'added';
+// Learned pick-up order: a check-off on a shopping trip, and per-store "A is picked before B" weights.
+// Both stay on this phone; they are never synced.
+export type TripPick = { key: string; groupId: string; at: number };
+export type Trip = { shopId: string; lastAt: number; picks: TripPick[] };
+export type Learning = { pairs: Record<string, Record<string, number>>; seen: Record<string, number> };
 export type SavedState = {
   version: 1;
   shops: Shop[];
@@ -40,6 +45,8 @@ export type SavedState = {
   collapsed: string[];
   viewMode?: 'groups' | 'list';
   itemSort?: ItemSort;
+  learning?: Record<string, Learning>;
+  trip?: Trip;
 };
 
 export const emptyState = (): SavedState => ({ version: 1, shops: [], outbox: [], collapsed: [] });
@@ -169,7 +176,8 @@ export function listItems(shop: Shop, sort: ItemSort = 'group') {
   return items;
 }
 
-const searchName = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ');
+// Also the key for learned pick-up order, so "Milk " and "milk" are the same item.
+export const searchName = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ');
 
 // The item with this name (ignoring case and extra spaces) in a live category. An item still on the
 // list wins; otherwise the most recently changed done or missing item, so adding it again can restore it.
@@ -225,6 +233,11 @@ export function itemDropSlot(shop: Shop, source: string, target: string, after: 
 export function planItemMove(shop: Shop, itemId: string, groupId: string, beforeId: string | null = null, allowCompleted = false) {
   const item = shop.items[itemId];
   if (!shop.groups[groupId] || shop.groups[groupId].deleted || !item || shop.groups[item.groupId]?.deleted || ((item.done || item.missing) && !allowCompleted) || item.deleted || beforeId === itemId) return {};
+  return insertionPatches(shop, groupId, itemId, item, beforeId);
+}
+
+// Position patches that place an item (existing or about to be added) before beforeId, or last.
+export function insertionPatches(shop: Shop, groupId: string, itemId: string, item: Item, beforeId: string | null): Record<string, { groupId: string; position: number }> {
   const items = activeItems(shop, groupId).filter(([id]) => id !== itemId);
   const index = beforeId === null ? items.length : items.findIndex(([id]) => id === beforeId);
   if (index < 0) return {};
@@ -239,6 +252,102 @@ export function planItemMove(shop: Shop, itemId: string, groupId: string, before
   // Re-space tied legacy timestamps or exhausted floating-point gaps only when needed.
   items.splice(index, 0, [itemId, item]);
   return Object.fromEntries(items.map(([id], i) => [id, { groupId, position: (i + 1) * 1024 }]));
+}
+
+// --- Learned pick-up order ---
+// Check-offs less than TRIP_GAP_MS apart in one store form a trip. When the trip ends, every pair of
+// items checked in the same category teaches "first before second". Old trips fade by LEARN_DECAY,
+// so a changed store layout takes over within a few trips.
+export const TRIP_GAP_MS = 45 * 60_000;
+export const MIN_TRIP_PICKS = 3;
+const LEARN_DECAY = 0.7;
+export const MAX_LEARNED_ITEMS = 300;
+
+export function learnTrip(learning: Learning | undefined, picks: TripPick[]): Learning | undefined {
+  if (picks.length < MIN_TRIP_PICKS) return learning;
+  const byGroup = new Map<string, string[]>();
+  for (const pick of [...picks].sort((a, b) => a.at - b.at)) {
+    const keys = byGroup.get(pick.groupId) ?? [];
+    if (!keys.includes(pick.key)) keys.push(pick.key);
+    byGroup.set(pick.groupId, keys);
+  }
+  const ordered = [...byGroup.values()].filter(keys => keys.length >= 2);
+  if (!ordered.length) return learning;
+  const pairs = { ...learning?.pairs };
+  const seen = { ...learning?.seen };
+  const copied = new Set<string>();
+  // Copy each touched row once so the previous learning object is never mutated.
+  const row = (key: string) => {
+    if (!copied.has(key)) { pairs[key] = { ...pairs[key] }; copied.add(key); }
+    return pairs[key];
+  };
+  const lastAt = Math.max(...picks.map(pick => pick.at));
+  for (const keys of ordered) {
+    keys.forEach((first, i) => {
+      seen[first] = lastAt;
+      for (const second of keys.slice(i + 1)) {
+        row(first)[second] = (pairs[first][second] ?? 0) * LEARN_DECAY + 1;
+        const back = (pairs[second]?.[first] ?? 0) * LEARN_DECAY;
+        if (back >= 0.01) row(second)[first] = back; else if (pairs[second]?.[first] !== undefined) delete row(second)[first];
+      }
+    });
+  }
+  // Forget the items not picked for the longest time once a store has too many.
+  const stale = Object.entries(seen).sort(([a, x], [b, y]) => x - y || a.localeCompare(b)).slice(0, Math.max(0, Object.keys(seen).length - MAX_LEARNED_ITEMS)).map(([key]) => key);
+  for (const key of stale) {
+    delete seen[key]; delete pairs[key];
+    for (const other of Object.keys(pairs)) if (pairs[other][key] !== undefined) delete row(other)[key];
+  }
+  return { pairs, seen };
+}
+
+// End the current trip and learn from it, once the gap has passed (or always when forced).
+export function closeTrip(state: SavedState, now: number, force = false): SavedState {
+  const trip = state.trip;
+  if (!trip || (!force && now - trip.lastAt < TRIP_GAP_MS)) return state;
+  const { trip: _, ...rest } = state;
+  if (!state.shops.some(shop => shop.id === trip.shopId)) return rest;
+  const learned = learnTrip(state.learning?.[trip.shopId], trip.picks);
+  return learned ? { ...rest, learning: { ...state.learning, [trip.shopId]: learned } } : rest;
+}
+
+// Record a check (done) or uncheck of an item. Unchecking during the trip un-learns that pick.
+export function recordCheck(state: SavedState, shopId: string, item: TripPick & { done: boolean }): SavedState {
+  const next = state.trip && (state.trip.shopId !== shopId || item.at - state.trip.lastAt >= TRIP_GAP_MS) ? closeTrip(state, item.at, true) : state;
+  const picks = next.trip?.picks.filter(pick => pick.key !== item.key) ?? [];
+  if (!item.done) return next.trip && picks.length !== next.trip.picks.length ? { ...next, trip: { ...next.trip, picks } } : next;
+  return { ...next, trip: { shopId, lastAt: item.at, picks: [...picks, { key: item.key, groupId: item.groupId, at: item.at }] } };
+}
+
+// Where an item fits in its category's current list by learned order: the id to insert before,
+// null for last, or undefined when nothing is known about it relative to the items on the list.
+export function learnedSlot(shop: Shop, learning: Learning | undefined, name: string, groupId: string, excludeId?: string): string | null | undefined {
+  if (!learning) return undefined;
+  const key = searchName(name);
+  const items = activeItems(shop, groupId).filter(([id, item]) => id !== excludeId && searchName(item.name) !== key);
+  const before = (a: string, b: string) => learning.pairs[a]?.[b] ?? 0;
+  const keys = items.map(([, item]) => searchName(item.name));
+  if (!keys.some(other => before(key, other) || before(other, key))) return undefined;
+  // Cost of slot i: evidence against the items placed before it and after it. Ties go to the later slot.
+  let best = 0, bestCost = Infinity;
+  for (let slot = 0; slot <= keys.length; slot++) {
+    const cost = keys.slice(0, slot).reduce((sum, other) => sum + before(key, other), 0)
+      + keys.slice(slot).reduce((sum, other) => sum + before(other, key), 0);
+    if (cost <= bestCost) { best = slot; bestCost = cost; }
+  }
+  return items[best]?.[0] ?? null;
+}
+
+const isNumberMap = (value: unknown): value is Record<string, number> => Boolean(value) && typeof value === 'object'
+  && Object.values(value as object).every(Number.isFinite);
+function isLearning(value: unknown): value is Learning {
+  const v = value as Learning;
+  return Boolean(v) && typeof v === 'object' && isNumberMap(v.seen) && Boolean(v.pairs) && typeof v.pairs === 'object' && Object.values(v.pairs).every(isNumberMap);
+}
+function isTrip(value: unknown): value is Trip {
+  const v = value as Trip;
+  return Boolean(v) && typeof v === 'object' && typeof v.shopId === 'string' && Number.isFinite(v.lastAt) && Array.isArray(v.picks)
+    && v.picks.every(pick => pick && typeof pick.key === 'string' && typeof pick.groupId === 'string' && Number.isFinite(pick.at));
 }
 
 export function storeInitials(name: string) {
@@ -313,5 +422,8 @@ export function decodeSaved(raw: string): SavedState {
   }
   if (data.itemSort !== undefined && !['group', 'name', 'added'].includes(data.itemSort)) delete data.itemSort;
   if (data.viewMode !== undefined && !['groups', 'list'].includes(data.viewMode)) delete data.viewMode;
+  // Learned order is a convenience: drop it if unreadable instead of rejecting the saved lists.
+  if (data.learning !== undefined && !(data.learning && typeof data.learning === 'object' && Object.values(data.learning).every(isLearning))) delete data.learning;
+  if (data.trip !== undefined && !isTrip(data.trip)) delete data.trip;
   return data;
 }
