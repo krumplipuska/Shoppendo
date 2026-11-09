@@ -1,11 +1,15 @@
-// The one banner ad: anchored at the bottom of the Stores screen, under the store list. Google test ads for now (TestIds), so tapping
-// them is safe. Swap in ADMOB.<platform>.bannerUnitId from ../ads for release once live ads are wanted.
+// The one banner ad: anchored at the bottom of the Stores screen, under the store list.
+// Which ads depends on the build (app.config.js): dev shows Google test ads (safe to tap), prod real
+// AdMob ads, and the paid pro build none at all.
 import { useEffect, useState } from 'react';
-import { TurboModuleRegistry, View } from 'react-native';
+import { Platform, TurboModuleRegistry, View } from 'react-native';
+import Constants from 'expo-constants';
+import { ADMOB } from '../ads';
 import { s } from '../styles';
 
-// Expo Go has no AdMob native code; skip ads there instead of crashing on import.
-const ads = TurboModuleRegistry.get('RNGoogleMobileAdsModule')
+const mode = (Constants.expoConfig?.extra?.ads ?? 'test') as 'test' | 'live' | 'none';
+// No ads in pro; Expo Go and pro builds also have no AdMob native code, so never import it there.
+const ads = mode !== 'none' && TurboModuleRegistry.get('RNGoogleMobileAdsModule')
   ? require('react-native-google-mobile-ads') as typeof import('react-native-google-mobile-ads') : null;
 let started: Promise<unknown> | undefined;
 
@@ -16,8 +20,9 @@ export function StoreBanner({ onHeight }: { onHeight?: (height: number) => void 
   useEffect(() => () => onHeight?.(0), [onHeight]);
   if (!ads || failed) return null;
   const { BannerAd, BannerAdSize, TestIds } = ads;
+  const unitId = mode === 'live' ? ADMOB[Platform.OS === 'ios' ? 'ios' : 'android'].bannerUnitId : TestIds.ADAPTIVE_BANNER;
   return <View style={s.storeBanner} onLayout={event => onHeight?.(event.nativeEvent.layout.height)}>
-    <BannerAd unitId={TestIds.ADAPTIVE_BANNER} size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+    <BannerAd unitId={unitId} size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
       requestOptions={{ requestNonPersonalizedAdsOnly: true }} onAdFailedToLoad={() => { setFailed(true); onHeight?.(0); }} />
   </View>;
 }
