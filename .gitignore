@@ -55,3 +55,6 @@ test-results/
 # Rules from android/.idea/.gitignore
 /android/.idea/shelf/
 /android/.idea/workspace.xml
+
+# Android Play upload key and its passwords (never commit)
+credentials/
