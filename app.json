@@ -47,11 +47,8 @@
     "plugins": [
       "expo-font",
       "./plugins/with-android-upload-signing.js",
+      ["react-native-google-mobile-ads", { "androidAppId": "ca-app-pub-6495432322512713~5666248779", "iosAppId": "ca-app-pub-6495432322512713~7508658535" }],
       ["expo-splash-screen", { "image": "./assets/shoppendo-splash.png", "imageWidth": 140, "resizeMode": "contain", "backgroundColor": "#F7F7F4" }]
     ]
-  },
-  "react-native-google-mobile-ads": {
-    "android_app_id": "ca-app-pub-6495432322512713~5666248779",
-    "ios_app_id": "ca-app-pub-6495432322512713~7508658535"
   }
 }

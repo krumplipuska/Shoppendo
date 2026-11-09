@@ -86,6 +86,7 @@ export const s = StyleSheet.create({
   allItemRow: { flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingLeft: 16, paddingRight: 4, paddingVertical: 8, gap: 8 },
   allItemDivider: { borderBottomWidth: StyleSheet.hairlineWidth * 2, borderBottomColor: c.border },
   allItemCategory: { maxWidth: '38%' },
+  storeBanner: { alignItems: 'center', backgroundColor: c.background, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border },
   allItemNote: { color: c.danger, fontFamily: f.medium, fontSize: 13, lineHeight: 18, marginTop: 2 },
   allItemAdded: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   menuPosition: { position: 'absolute', top: 62, right: 12, zIndex: 20 },

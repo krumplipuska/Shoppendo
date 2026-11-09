@@ -17,6 +17,8 @@ import { ShoppingList } from './src/screens/ShoppingList';
 function Main() {
   const { data, ready, error, undo } = useShops();
   const [selected, setSelected] = useState<string | null>(null);
+  // The store page's banner height, so Undo floats above the ad instead of over it.
+  const [bannerHeight, setBannerHeight] = useState(0);
   const [invite, setInvite] = useState<{ code: string } | null>(null);
   const [joining, setJoining] = useState(false);
   const [linkError, setLinkError] = useState('');
@@ -54,9 +56,9 @@ function Main() {
         importantForAccessibility={shop ? 'no-hide-descendants' : 'auto'} aria-hidden={Boolean(shop)}>
         <DraxProvider><ShopList open={setSelected} /></DraxProvider>
       </View>
-      {shop && <View style={StyleSheet.absoluteFill}><ShoppingList key={shop.id} shop={shop} replaced={setSelected} back={() => setSelected(null)} /></View>}
+      {shop && <View style={StyleSheet.absoluteFill}><ShoppingList key={shop.id} shop={shop} replaced={setSelected} back={() => setSelected(null)} onBannerHeight={setBannerHeight} /></View>}
     </View>
-    {undo && <FloatingUndoButton key={undo.startedAt} label={undo.label} onPress={actions.undo} duration={UNDO_MS} />}
+    {undo && <FloatingUndoButton key={undo.startedAt} label={undo.label} onPress={actions.undo} duration={UNDO_MS} bottomInset={shop ? bannerHeight : 0} />}
   </KeyboardAvoidingView>;
 }
 

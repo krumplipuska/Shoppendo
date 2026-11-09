@@ -299,8 +299,8 @@ export function FloatingAddButton({ label, accessibilityLabel = label, onPress, 
   </Pressable>;
 }
 
-export function FloatingUndoButton({ label, onPress, duration }: {
-  label: string; onPress: () => void; duration: number;
+export function FloatingUndoButton({ label, onPress, duration, bottomInset = 0 }: {
+  label: string; onPress: () => void; duration: number; bottomInset?: number;
 }) {
   const reducedMotion = useReducedMotion();
   const progress = useSharedValue(1);
@@ -317,7 +317,7 @@ export function FloatingUndoButton({ label, onPress, duration }: {
   return <Animated.View entering={Platform.OS === 'web' ? undefined : FadeIn.duration(150).reduceMotion(ReduceMotion.System)} exiting={Platform.OS === 'web' ? undefined : FadeOut.duration(120).reduceMotion(ReduceMotion.System)}
     pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 40 }]}>
     <Pressable accessibilityRole="button" accessibilityLabel={`Undo ${label}`} accessibilityLiveRegion="polite" onPress={onPress}
-      style={({ pressed }) => [ui.floatingUndo, pressed && { opacity: 0.8 }]}>
+      style={({ pressed }) => [ui.floatingUndo, bottomInset > 0 && { bottom: 20 + bottomInset }, pressed && { opacity: 0.8 }]}>
       <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: c.text }]} />
       <Animated.View pointerEvents="none" style={[ui.floatingUndoFill, fillStyle]} />
       <View pointerEvents="none" style={ui.floatingUndoContent}>
