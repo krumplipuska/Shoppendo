@@ -5,6 +5,7 @@ import { colors as c, fonts as f } from './theme';
 import { type GroupIcon } from './model';
 import { backSwipeDirection, deleteSwipeProgress, keyboardOverlap } from './interaction';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { runOnJS } from 'react-native-worklets';
 import Animated, { Easing as MotionEasing, FadeIn, FadeOut, ReduceMotion, useReducedMotion, useAnimatedStyle, useSharedValue, withTiming, cancelAnimation } from 'react-native-reanimated';
 
@@ -204,6 +205,13 @@ export function Sheet({ visible, title, children, onClose, onShow, compact = fal
   const offset = useRef(new NativeAnimated.Value(height)).current;
   const dim = useRef(new NativeAnimated.Value(0)).current;
   const keyboardGap = useRef(new NativeAnimated.Value(0)).current;
+  // Android draws apps edge to edge, so a sheet at the bottom sits under the navigation bar. Keep it
+  // above the bar, or above the keyboard when that is higher. iOS already lays the sheet out correctly.
+  const insets = useSafeAreaInsets();
+  const navigationBar = Platform.OS === 'android' ? insets.bottom : 0;
+  const sheetBottom = navigationBar > 0
+    ? keyboardGap.interpolate({ inputRange: [0, navigationBar, navigationBar + 1], outputRange: [navigationBar, navigationBar, navigationBar + 1], extrapolateRight: 'extend' })
+    : keyboardGap;
   const viewportBottom = useRef(height);
   const modalFrame = useRef<React.ComponentRef<typeof View>>(null);
   const keyboardTarget = useRef(0);
@@ -270,7 +278,7 @@ export function Sheet({ visible, title, children, onClose, onShow, compact = fal
     })}>
       <NativeAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFill, ui.backdrop, { opacity: dim }]} />
       <Pressable style={StyleSheet.absoluteFill} onPress={() => dismiss.current()} accessibilityLabel="Close dialog" accessibilityRole="button" />
-      <NativeAnimated.View pointerEvents="box-none" style={[ui.sheetPosition, { bottom: keyboardGap }]}>
+      <NativeAnimated.View pointerEvents="box-none" style={[ui.sheetPosition, { bottom: sheetBottom }]}>
         <NativeAnimated.View {...bodyPan.panHandlers} accessibilityViewIsModal style={[ui.sheet, compact && ui.compactSheet, { transform: [{ translateY: offset }] }]}>
           <View pointerEvents="none" style={[ui.sheetUnderlay, { height }]} />
           <View {...gripPan.panHandlers} collapsable={false} style={ui.gripTarget}><View pointerEvents="none" style={ui.grabber} /></View>
