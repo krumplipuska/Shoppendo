@@ -1,4 +1,4 @@
-// The one banner ad: anchored under the store page's list. Google test ads for now (TestIds), so tapping
+// The one banner ad: anchored at the bottom of the Stores screen, under the store list. Google test ads for now (TestIds), so tapping
 // them is safe. Swap in ADMOB.<platform>.bannerUnitId from ../ads for release once live ads are wanted.
 import { useEffect, useState } from 'react';
 import { TurboModuleRegistry, View } from 'react-native';

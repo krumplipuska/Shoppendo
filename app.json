@@ -11,8 +11,7 @@
     "ios": {
       "supportsTablet": false,
       "appleTeamId": "JCF57JAY8Q",
-      "bundleIdentifier": "com.tamasbagyinszki.shoppendo.dev",
-      "associatedDomains": ["applinks:shoppendo-1a86c.web.app"]
+      "bundleIdentifier": "com.tamasbagyinszki.shoppendo.dev"
     },
     "android": {
       "package": "com.tamasbagyinszki.shoppendo",
@@ -48,6 +47,7 @@
       "expo-font",
       "./plugins/with-android-upload-signing.js",
       ["react-native-google-mobile-ads", { "androidAppId": "ca-app-pub-6495432322512713~5666248779", "iosAppId": "ca-app-pub-6495432322512713~7508658535" }],
+      ["expo-build-properties", { "android": { "extraProguardRules": "# Google Mobile Ads uses WorkManager, whose Room database is created by reflection; keep it from release code shrinking.\n-keep class * extends androidx.room.RoomDatabase { <init>(); }\n-keep class androidx.work.impl.WorkDatabase_Impl { *; }" } }],
       ["expo-splash-screen", { "image": "./assets/shoppendo-splash.png", "imageWidth": 140, "resizeMode": "contain", "backgroundColor": "#F7F7F4" }]
     ]
   }

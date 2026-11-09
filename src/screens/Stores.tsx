@@ -12,6 +12,7 @@ import { STORE_GAP, s } from '../styles';
 import { type Drag, accepts, DRAG_DELAY, fadeIn, fadeOut, useHoldDrag, EntryAnimation, useEntryGate, ItemDragContext, trace, hoverFrame, useListDrag, useRowMotion, ListTail } from '../drag';
 import { ShareShop } from '../components/ShareShop';
 import { Tutorial } from '../components/Tutorial';
+import { StoreBanner } from '../components/StoreBanner';
 
 export function AddStore({ open, close }: { open: (id: string) => void; close: () => void }) {
   const [mode, setMode] = useState<'new' | 'join'>('new');
@@ -114,7 +115,7 @@ export const StoreRow = memo(function StoreRow({ shop, open, share }: { shop: Sh
   </Animated.View>;
 });
 
-export const ShopList = memo(function ShopList({ open }: { open: (id: string) => void }) {
+export const ShopList = memo(function ShopList({ open, onBannerHeight }: { open: (id: string) => void; onBannerHeight?: (height: number) => void }) {
   const { data } = useShops();
   const [adding, setAdding] = useState(false);
   const order = useMemo(() => data.shops.map(shop => shop.id), [data.shops]);
@@ -131,12 +132,16 @@ export const ShopList = memo(function ShopList({ open }: { open: (id: string) =>
     <View style={s.homeHeader}><View style={s.titleRow}><View style={s.flex}><Text accessibilityRole="header" style={s.title}>Stores</Text><Text style={s.homeSubtitle}>A picking order for every store.</Text></View>
       <IconButton icon="info" label="How Shoppendo works" onPress={() => setTutorial(true)} style={s.infoButton} />
     </View></View>
+    {/* The store list and Add store button share the space above the banner, so neither covers the ad. */}
+    <View style={s.flex}>
     <DraxView style={s.flex} draggable={false} receptive={false} onMeasure={dragList.measureViewport}><DraxScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" bounces={false} contentContainerStyle={s.storesContent} style={s.flex}>
       <View style={s.storeRows}>{data.shops.map(shop => <StoreRow key={shop.id} shop={shop} open={open} share={setSharing} />)}</View>
       <ListTail shopId="" kind="store" last={order.at(-1)} />
       {!data.shops.length && <View style={s.emptyStores}><Icon name="bag" size={32} /><Text style={s.emptyTitle}>Your first store</Text><Text style={s.caption}>Tap + to create a store or join by ID.</Text></View>}
     </DraxScrollView></DraxView>
     {!adding && <FloatingAddButton label="Add store" accessibilityLabel="Add or join a store" onPress={() => setAdding(true)} />}
+    </View>
+    <StoreBanner onHeight={onBannerHeight} />
     {adding && <AddStore open={open} close={() => setAdding(false)} />}
     {sharedShop && <ShareShop shop={sharedShop} replaced={setSharing} close={() => setSharing(null)} />}
     {tutorial && <Tutorial close={() => setTutorial(false)} />}

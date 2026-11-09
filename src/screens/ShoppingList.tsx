@@ -12,7 +12,6 @@ import { colors as c, entityTone } from '../theme';
 import { s } from '../styles';
 import { fadeIn, ItemEditorContext, EntryAnimation, useEntryGate, ItemDragContext, useListDrag, ListTail } from '../drag';
 import { usePageBack, ShopScroll } from '../page';
-import { StoreBanner } from '../components/StoreBanner';
 import { ItemRow } from '../components/ItemRow';
 import { ShareShop } from '../components/ShareShop';
 import { AddItem } from '../components/ItemEditor';
@@ -34,7 +33,7 @@ export function ItemArrival({ shop, item, close, start, end }: { shop: Shop; ite
     <Text style={[s.itemName, s.flex]} numberOfLines={1}>{item.name}</Text><Icon name="check" size={20} /><Text style={s.caption}>Added</Text>
   </Animated.View>;
 }
-export function ShoppingList({ shop, back, replaced, onBannerHeight }: { shop: Shop; back: () => void; replaced: (id: string) => void; onBannerHeight?: (height: number) => void }) {
+export function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () => void; replaced: (id: string) => void }) {
   const { data } = useShops();
   const [sharing, setSharing] = useState(false);
   const [editingStore, setEditingStore] = useState(false);
@@ -169,8 +168,6 @@ export function ShoppingList({ shop, back, replaced, onBannerHeight }: { shop: S
         </Animated.View>
       </EditingRegion></View>}
     </View>
-    {/* The list and Add item button share the space above the banner, so neither covers the ad. */}
-    <View style={s.flex}>
     <EntryAnimation.Provider value={entryGate}><ItemEditorContext.Provider value={editItem}><ItemDragContext.Provider value={itemDrag}><GestureDetector gesture={page.body} touchAction="pan-y"><View style={s.flex}><ShopScroll page={page}>
       <View>
         <View style={flatItems.length ? s.itemPanel : undefined}>{flatItems.map(([id]) => <ItemRow key={id} shopId={shop.id} groups={shop.groups} order={groups} id={id} item={shop.items[id]} showCategory manualOrder={itemSort === 'group'} toggle={toggle} flagged={flaggedItem === id} />)}</View>
@@ -186,8 +183,6 @@ export function ShoppingList({ shop, back, replaced, onBannerHeight }: { shop: S
       </View>
     </ShopScroll></View></GestureDetector></ItemDragContext.Provider></ItemEditorContext.Provider></EntryAnimation.Provider>
     {!topAdding && !editingItem && <FloatingAddButton label="Add item" disabled={!groups.length} onPress={() => setTopAdding(true)} />}
-    </View>
-    <StoreBanner onHeight={onBannerHeight} />
     {arrival && !overlayOpen && <ItemArrival key={arrival.id} shop={shop} item={arrival} start={76} end={headerHeight + 16} close={() => setArrival(null)} />}
       {(topAdding || editingItem) && <AddItem key={editingItem ?? 'new'} shop={shop} editingId={editingItem ?? undefined}
         onAdded={(id, name, groupId) => setArrival({ id, name, groupId })} onDuplicate={setFlaggedItem}
