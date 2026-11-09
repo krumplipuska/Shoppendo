@@ -1,5 +1,5 @@
 import { collection, doc, getDocFromServer, getDocsFromServer, onSnapshot, runTransaction, setDoc, type Firestore } from 'firebase/firestore';
-import { applyWrite, isGroup, isItem, isShopMeta, type Group, type Item, type Shop, type Write } from './model.ts';
+import { applyWrite, applyWritesMerged, duplicateItems, isGroup, isItem, isShopMeta, type Group, type Item, type Shop, type Write } from './model.ts';
 
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const validId = (id: string) => /^[\w-]{1,80}$/.test(id);
@@ -81,7 +81,11 @@ export async function writeShop(db: Firestore, uid: string, writes: Write[], loc
     let shop: Shop = snapshot.exists() ? decodeShop(shopId, snapshot.data())
       : localShop ?? { id: shopId, name: '', createdAt: 0, groupOrder: [], groups: {}, items: {}, shared: true };
     const before = snapshot.exists() ? JSON.stringify(encodeShop(shop)) : undefined;
-    for (const write of writes) shop = applyWrite(shop, write);
+    // Two phones adding the same item end up with one copy; copies already doubled are tidied too.
+    shop = applyWritesMerged(shop, writes, localShop);
+    for (const itemId of duplicateItems(shop)) {
+      shop = applyWrite(shop, { id: itemId, shopId, target: 'items', entityId: itemId, data: { deleted: true, updatedAt: Date.now() } });
+    }
     const data = encodeShop(shop);
     // A retry after a lost acknowledgement may already be applied on the server.
     if (JSON.stringify(data) === before) return;

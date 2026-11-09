@@ -104,4 +104,26 @@ test('sync batches durable edits, ignores snapshot/preferences, and supports imm
   assert.equal(JSON.parse(state.raw).shops[0].items.apple.deleted, false, 'Remove missing leaves done items');
   actions.clearItems(shop.id, 'done'); await settle();
   assert.equal(JSON.parse(state.raw).shops[0].items.apple.deleted, true, 'Remove done hides done items');
+
+  // Quick add (All items and the Add item sheet): removed → new item, on the list → left alone, done → back on the list.
+  const added = actions.quickAdd(shop.id, 'Green apple', 'fruit');
+  assert.equal(added.result, 'added'); await settle();
+  assert.equal(JSON.parse(state.raw).shops[0].items[added.id].done, false, 'a removed item is added to the list again');
+  assert.deepEqual(actions.quickAdd(shop.id, ' green APPLE ', 'fruit'), { result: 'duplicate', id: added.id, name: 'Green apple', groupId: 'fruit' },
+    'an item already on the list is not added twice');
+  actions.toggleItem(shop.id, added.id); await settle();
+  assert.equal(actions.quickAdd(shop.id, 'Green apple', 'fruit').result, 'restored'); await settle();
+  saved = JSON.parse(state.raw).shops[0];
+  assert.equal(saved.items[added.id].done, false, 'a done item moves back to the list');
+  assert.equal(Object.values(saved.items).filter(entry => !entry.deleted).length, 1, 'no copies are made');
+
+  // All items → delete erases every copy of the name (on the list and removed ones); undo brings them back.
+  const copies = Object.entries(saved.items).filter(([, entry]) => entry.name === 'Green apple').map(([itemId]) => itemId);
+  assert.ok(copies.length >= 2);
+  actions.eraseItem(shop.id, 'green apple'); await settle();
+  saved = JSON.parse(state.raw).shops[0];
+  assert.equal(Object.values(saved.items).some(entry => entry.name === 'Green apple'), false, 'every copy is erased');
+  actions.undo(); await settle();
+  saved = JSON.parse(state.raw).shops[0];
+  assert.deepEqual(copies.filter(itemId => saved.items[itemId]?.name === 'Green apple'), copies, 'undo restores every copy');
 });

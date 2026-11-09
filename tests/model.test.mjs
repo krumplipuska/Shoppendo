@@ -2,7 +2,7 @@ import { entityTone } from '../src/theme.ts';
 import { deleteSwipeProgress, backSwipeDirection, swipeAxis, keyboardOverlap } from '../src/interaction.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acknowledge, activeItems, decodeSaved, doneItems, findListItem, missingItems, doneOverflow, MAX_DONE_ITEMS, edit, emptyState, formatCode, GROUP_ICONS, isGroup, itemSuggestions, listItems, mergeRemote, mergeCategoryOrder, normalizeCode, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, storeInitials, validName } from '../src/model.ts';
+import { acknowledge, activeItems, applyWrite, applyWritesMerged, duplicateItems, forgetItem, decodeSaved, doneItems, findListItem, missingItems, doneOverflow, MAX_DONE_ITEMS, edit, emptyState, formatCode, GROUP_ICONS, isGroup, itemSuggestions, listItems, mergeRemote, mergeCategoryOrder, normalizeCode, orderedGroups, planItemMove, reorderShops, STARTER_GROUPS, storeInitials, validName } from '../src/model.ts';
 
 const code = 'ABCDEFGHJKLMNPQRSTUV';
 const item = (name, groupId = 'fruit') => ({ name, groupId, done: false, deleted: false, createdAt: 1, updatedAt: 1 });
@@ -583,4 +583,95 @@ test('saved lists load with or without learned order, dropping unreadable learni
   assert.equal(broken.learning, undefined);
   assert.equal(broken.trip, undefined);
   assert.equal(broken.shops.length, 1);
+});
+
+import { storeItems } from '../src/model.ts';
+test('storeItems lists every name once, in store category order then A–Z, with its list status', () => {
+  const data = shop();
+  data.groupOrder = ['bread', 'fruit'];
+  data.groups.gone = { name: 'Old', createdAt: 3, deleted: true };
+  data.items = {
+    pear: item('Pears'), apple: { ...item('apples'), done: true }, bananaOld: { ...item('Bananas'), deleted: true, updatedAt: 1 },
+    banana: { ...item(' Bananas '), missing: true, updatedAt: 5 }, kiwiGone: { ...item('Kiwi'), deleted: true },
+    loaf: item('Bread', 'bread'), bagel: { ...item('Bagel', 'bread'), deleted: true }, old: item('Ghost', 'gone'),
+  };
+  assert.deepEqual(storeItems(data).map(({ id, name, status }) => [id, name, status]), [
+    ['bagel', 'Bagel', 'removed'], ['loaf', 'Bread', 'list'],
+    ['apple', 'apples', 'done'], ['banana', 'Bananas', 'missing'], ['kiwiGone', 'Kiwi', 'removed'], ['pear', 'Pears', 'list'],
+  ]);
+  data.items.bananaNew = item('BANANAS');
+  assert.equal(storeItems(data).find(entry => entry.key === 'bananas').status, 'list', 'an item on the list wins over done/missing/removed copies');
+  data.groupOrder = ['fruit', 'bread'];
+  assert.equal(storeItems(data)[0].groupId, 'fruit', 'follows a changed category order');
+});
+
+test('two phones adding the same item keep one copy, and later edits to the dropped copy reach the kept one', () => {
+  // Alice's Milk reached the server first; Bob's own Milk (added offline) arrives second.
+  const server = { ...shop(), items: { ...shop().items, aliceMilk: { ...item('Milk', 'bread'), createdAt: 5 } } };
+  const bob = [write('add', 'items', 'bobMilk', { ...item(' milk ', 'fruit'), createdAt: 4, position: 1024 }),
+    write('check', 'items', 'bobMilk', { done: true, updatedAt: 9 }), write('other', 'items', 'apple', { done: true, updatedAt: 9 })];
+  const result = applyWritesMerged(server, bob);
+  assert.equal(result.items.bobMilk, undefined);
+  assert.equal(result.items.aliceMilk.done, true);
+  assert.equal(result.items.aliceMilk.groupId, 'bread'); // Bob's category and position don't move the kept copy.
+  assert.equal(result.items.apple.done, true);
+  // A different name, or a Milk that is only done or missing, is not a duplicate.
+  const done = { ...server, items: { ...server.items, aliceMilk: { ...server.items.aliceMilk, done: true } } };
+  assert.ok(applyWritesMerged(done, bob.slice(0, 1)).items.bobMilk);
+  assert.ok(applyWritesMerged(server, [write('add', 'items', 'oat', { ...item('Oat milk'), createdAt: 4 })]).items.oat);
+});
+
+test('restoring or renaming into a name already on the list removes that copy instead', () => {
+  const server = { ...shop(), items: { ...shop().items, milk: item('Milk'), oldMilk: { ...item('Milk'), done: true }, cream: item('Cream') } };
+  const restored = applyWritesMerged(server, [write('r', 'items', 'oldMilk', { done: false, missing: false, updatedAt: 7 }),
+    write('m', 'items', 'oldMilk', { missing: true, updatedAt: 8 })]);
+  assert.equal(restored.items.oldMilk.deleted, true);
+  assert.equal(restored.items.milk.missing, true); // The later edit went to the copy on the list.
+  const renamed = applyWritesMerged(server, [write('n', 'items', 'cream', { name: 'MILK', updatedAt: 7 })]);
+  assert.equal(renamed.items.cream.deleted, true);
+  assert.equal(renamed.items.milk.deleted, false);
+  // An edit to a copy merged away in an earlier sync goes to the kept item by name, or is dropped.
+  const local = { ...server, items: { ...server.items, gone: item('Milk') } };
+  assert.equal(applyWritesMerged(server, [write('c', 'items', 'gone', { done: true, updatedAt: 9 })], local).items.milk.done, true);
+  assert.equal(applyWritesMerged(server, [write('c', 'items', 'gone', { done: true, updatedAt: 9 })]).items.gone, undefined);
+});
+
+test('a snapshot with the other phone\'s copy merges an unsent local add right away', () => {
+  let data = edit(state(), write('add', 'items', 'mine', { ...item('Milk'), createdAt: 4 }));
+  data = mergeRemote(data, code, 'items', { ...shop().items, theirs: { ...item('Milk'), createdAt: 5 } });
+  const items = data.shops[0].items;
+  assert.equal(items.mine, undefined);
+  assert.equal(items.theirs.name, 'Milk');
+  assert.equal(data.outbox.length, 1); // Still sent, so the server merges it the same way.
+});
+
+test('copies already on the list twice keep the first added; done, missing and removed copies are left alone', () => {
+  const doubled = { ...shop(), items: { ...shop().items,
+    b: { ...item('Milk'), createdAt: 3 }, a: { ...item('milk '), createdAt: 3 }, late: { ...item('MILK'), createdAt: 1 },
+    done: { ...item('Milk'), done: true }, gone: { ...item('Milk'), deleted: true }, other: { ...item('Milk'), missing: true } } };
+  assert.deepEqual(duplicateItems(doubled), ['a', 'b']);
+  assert.deepEqual(duplicateItems(shop()), []);
+});
+
+test('erasing an item removes its record, survives stale snapshots, and later edits from other phones cannot bring it back', () => {
+  const erase = write('erase', 'items', 'apple', {});
+  erase.remove = true;
+  let data = edit(state(), erase);
+  assert.equal(data.shops[0].items.apple, undefined);
+  assert.equal(data.outbox.length, 1);
+  assert.equal(edit(data, { ...erase, id: 'again' }), data, 'erasing twice changes nothing');
+  data = mergeRemote(data, code, 'items', shop().items); // Older snapshot that still has it.
+  assert.equal(data.shops[0].items.apple, undefined);
+  // The server erases it; another phone's later check-off of the erased item is dropped.
+  const server = applyWritesMerged(shop(), [erase]);
+  assert.equal(server.items.apple, undefined);
+  assert.equal(applyWritesMerged(server, [write('c', 'items', 'apple', { done: true, updatedAt: 9 })]).items.apple, undefined);
+  assert.equal(applyWrite(shop(), { ...erase, target: 'groups', entityId: 'fruit' }).groups.fruit.name, 'Fruits', 'only items can be erased');
+});
+
+test('forgetting an item drops it from the learned order on both sides of every pair', () => {
+  const learning = { seen: { milk: 1, eggs: 2, bread: 3 }, pairs: { milk: { eggs: 1 }, eggs: { milk: 0.5, bread: 1 }, bread: { eggs: 0.2 } } };
+  assert.deepEqual(forgetItem(learning, 'milk'), { seen: { eggs: 2, bread: 3 }, pairs: { eggs: { bread: 1 }, bread: { eggs: 0.2 } } });
+  assert.equal(forgetItem(learning, 'cheese'), learning);
+  assert.equal(forgetItem(undefined, 'milk'), undefined);
 });

@@ -3,7 +3,7 @@ import * as Crypto from 'expo-crypto';
 import { AppState } from 'react-native';
 import { useSyncExternalStore } from 'react';
 import { acknowledge, CODE_ALPHABET, decodeSaved, edit, emptyState, mergeRemote, normalizeCode,
-  doneOverflow, orderedGroups, planItemMove, insertionPatches, learnedSlot, recordCheck, closeTrip, searchName, reorderShops, STARTER_GROUPS, GROUP_ICONS, validName, type GroupIcon, type Item, type ItemSort, type SavedState, type Shop, type Write } from './model';
+  doneOverflow, duplicateItems, findListItem, forgetItem, orderedGroups, planItemMove, insertionPatches, learnedSlot, recordCheck, closeTrip, searchName, reorderShops, STARTER_GROUPS, GROUP_ICONS, validName, type GroupIcon, type Item, type ItemSort, type SavedState, type Shop, type Write } from './model';
 import { firebaseConfigured, joinRemote, publishShop, sendWrites, watchShop, stopSharing } from './firebase';
 
 const STORAGE_KEY = 'shoppendo.v1';
@@ -168,7 +168,12 @@ function refreshWatchers() {
     if (watchers.has(shop.id) || starting.has(shop.id) || saved.outbox.some(w => w.shopId === shop.id && w.target === 'shop' && w.data.createdAt)) continue;
     starting.add(shop.id);
     void watchShop(shop, (target, data) => {
-      const next = mergeRemote(saved, shop.id, target, data);
+      let next = mergeRemote(saved, shop.id, target, data);
+      // Tidy copies already on the list twice; every phone removes the same ones.
+      const current = next.shops.find(s => s.id === shop.id);
+      for (const itemId of current ? duplicateItems(current) : []) {
+        next = edit(next, { id: id(), shopId: shop.id, target: 'items', entityId: itemId, data: { deleted: true, updatedAt: Date.now() } });
+      }
       if (next !== saved) void persist(next).catch(() => {});
     }, error => notify({ error: errorMessage(error) })).then(stop => {
       if (saved.shops.some(s => s.id === shop.id && s.shared)) watchers.set(shop.id, stop);
@@ -275,6 +280,19 @@ export const actions = {
     void persist(placeItem(saved, shopId, itemId, insertionPatches(shop, groupId, itemId, item, beforeId), item)).catch(() => {});
     return itemId;
   },
+  // Add by name the way the Add item sheet does: an item already on the list is left alone, a done or
+  // missing one goes back on the list, anything else is added to groupId.
+  quickAdd(shopId: string, name: string, groupId: string): { result: 'duplicate' | 'restored' | 'added'; id: string; name: string; groupId: string } {
+    const shop = saved.shops.find(s => s.id === shopId);
+    const existing = shop ? findListItem(shop, name) : undefined;
+    if (existing && !existing[1].done && !existing[1].missing) return { result: 'duplicate', id: existing[0], name: existing[1].name, groupId: existing[1].groupId };
+    if (existing) {
+      actions.restoreItem(shopId, existing[0]);
+      return { result: 'restored', id: existing[0], name: existing[1].name, groupId: existing[1].groupId };
+    }
+    const added = actions.addItem(shopId, groupId, name);
+    return { result: 'added', id: added, name: name.trim(), groupId };
+  },
   moveItem(shopId: string, itemId: string, groupId: string, beforeId: string | null = null, allowCompleted = false) {
     const shop = saved.shops.find(s => s.id === shopId);
     if (!shop) return;
@@ -320,6 +338,27 @@ export const actions = {
     if (!item || item.deleted) return;
     update({ shopId, target: 'items', entityId: itemId, data: { deleted: true, updatedAt: Date.now() } });
     offerUndo(`${item.name} deleted`, () => update({ shopId, target: 'items', entityId: itemId, data: { deleted: false, updatedAt: Date.now() } }));
+  },
+  // All items → delete: erase every record of this name from the store (list, Done, Missing and
+  // removed copies) and forget its learned place, so it no longer appears anywhere. Undo puts it all back.
+  eraseItem(shopId: string, name: string) {
+    const shop = saved.shops.find(s => s.id === shopId);
+    if (!shop) return;
+    const key = searchName(name);
+    const erased = Object.entries(shop.items).filter(([, item]) => searchName(item.name) === key);
+    if (!erased.length) return;
+    const learned = saved.learning?.[shopId];
+    let next = saved;
+    for (const [entityId] of erased) next = edit(next, { id: id(), shopId, target: 'items', entityId, data: {}, remove: true });
+    const forgotten = forgetItem(learned, key);
+    if (forgotten !== learned) next = { ...next, learning: { ...next.learning, [shopId]: forgotten! } };
+    void persist(next).catch(() => {});
+    offerUndo(`${name.trim()} deleted`, () => {
+      let restored = saved;
+      for (const [entityId, item] of erased) restored = edit(restored, { id: id(), shopId, target: 'items', entityId, data: { ...item, updatedAt: Date.now() } });
+      if (learned && forgotten !== learned) restored = { ...restored, learning: { ...restored.learning, [shopId]: learned } };
+      if (restored !== saved) void persist(restored).catch(() => {});
+    });
   },
   // Empty the list (or just its Missing or Done section): hide those items in live categories without
   // erasing them. Names stay available as suggestions; categories, order and each item's state are kept for undo.

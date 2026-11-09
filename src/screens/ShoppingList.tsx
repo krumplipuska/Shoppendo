@@ -16,6 +16,7 @@ import { ItemRow } from '../components/ItemRow';
 import { ShareShop } from '../components/ShareShop';
 import { AddItem } from '../components/ItemEditor';
 import { CategoryOrder } from './CategoryOrder';
+import { AllItems } from './AllItems';
 
 export function ItemArrival({ shop, item, close, start, end }: { shop: Shop; item: { name: string; groupId: string }; close: () => void; start: number; end: number }) {
   const y = useSharedValue(start);
@@ -41,6 +42,9 @@ export function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () =>
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [categoryDraft, setCategoryDraft] = useState<string[] | null>(null);
   const sortingGroups = categoryDraft !== null;
+  const [allItemsOpen, setAllItemsOpen] = useState(false);
+  // A full-page overlay (Picking order or All items) covers the list: keep the list inert underneath.
+  const overlayOpen = sortingGroups || allItemsOpen;
   const [headerHeight, setHeaderHeight] = useState(72);
   const finishSorting = () => {
     if (categoryDraft) {
@@ -82,17 +86,17 @@ export function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () =>
     const slot = itemDropSlot(currentShop, chosen.source, chosen.target, chosen.after);
     if (slot) actions.moveItem(shop.id, chosen.source, slot.groupId, slot.beforeId);
   }, itemSort);
-  const page = usePageBack(back, !itemDrag.dragging && !editingStore && !topAdding && !editingItem && !sortingGroups && !menuOpen);
-  const closePage = () => { if (sortingGroups) finishSorting(); else page.close(); };
+  const page = usePageBack(back, !itemDrag.dragging && !editingStore && !topAdding && !editingItem && !overlayOpen && !menuOpen);
+  const closePage = () => { if (sortingGroups) finishSorting(); else if (allItemsOpen) setAllItemsOpen(false); else page.close(); };
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => { closePage(); return true; });
     return () => sub.remove();
-  }, [page.close, categoryDraft, shop]);
+  }, [page.close, categoryDraft, shop, allItemsOpen]);
   const completed = picked;
   return <Animated.View style={s.flex} entering={SlideInDown.duration(240).easing(Easing.bezier(0.22, 1, 0.36, 1)).reduceMotion(ReduceMotion.System)}>
-    <View style={s.flex} {...(Platform.OS === 'web' ? { inert: sortingGroups } : {})}
-      pointerEvents={sortingGroups ? 'none' : 'auto'} accessibilityElementsHidden={sortingGroups}
-      importantForAccessibility={sortingGroups ? 'no-hide-descendants' : 'auto'} aria-hidden={sortingGroups}>
+    <View style={s.flex} {...(Platform.OS === 'web' ? { inert: overlayOpen } : {})}
+      pointerEvents={overlayOpen ? 'none' : 'auto'} accessibilityElementsHidden={overlayOpen}
+      importantForAccessibility={overlayOpen ? 'no-hide-descendants' : 'auto'} aria-hidden={overlayOpen}>
     <GestureDetector gesture={page.edge} touchAction="pan-y"><Animated.View style={[s.flex, s.shopPage, page.style]}>
     <View style={s.listHeader} onLayout={event => setHeaderHeight(event.nativeEvent.layout.height)}>
       <GestureDetector gesture={page.header} touchAction="none"><View style={s.pageHeader}>
@@ -131,6 +135,10 @@ export function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () =>
         <Animated.View entering={fadeIn} style={s.viewMenu}>
           <Pressable accessibilityRole="button" style={s.menuOption} onPress={() => { setMenuOpen(false); setEditingStore(true); }}>
             <Text style={s.link}>Rename store</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="All items" accessibilityHint="Shows every item this store has had, to add one back." style={s.menuOption}
+            onPress={() => { setMenuOpen(false); setTopAdding(false); setEditingItem(null); setAllItemsOpen(true); }}>
+            <Text style={[s.link, s.flex]}>All items</Text><Icon name="right" size={18} />
           </Pressable>
           <Text style={[s.menuCaption, s.menuShare]}>Sort items</Text>
           <Text style={s.menuCaption}>Choose By group to drag items.</Text>
@@ -175,7 +183,7 @@ export function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () =>
       </View>
     </ShopScroll></View></GestureDetector></ItemDragContext.Provider></ItemEditorContext.Provider></EntryAnimation.Provider>
     {!topAdding && !editingItem && <FloatingAddButton label="Add item" disabled={!groups.length} onPress={() => setTopAdding(true)} />}
-    {arrival && !sortingGroups && <ItemArrival key={arrival.id} shop={shop} item={arrival} start={76} end={headerHeight + 16} close={() => setArrival(null)} />}
+    {arrival && !overlayOpen && <ItemArrival key={arrival.id} shop={shop} item={arrival} start={76} end={headerHeight + 16} close={() => setArrival(null)} />}
       {(topAdding || editingItem) && <AddItem key={editingItem ?? 'new'} shop={shop} editingId={editingItem ?? undefined}
         onAdded={(id, name, groupId) => setArrival({ id, name, groupId })} onDuplicate={setFlaggedItem}
         close={() => { setTopAdding(false); setEditingItem(null); setFlaggedItem(null); }} />}
@@ -183,6 +191,9 @@ export function ShoppingList({ shop, back, replaced }: { shop: Shop; back: () =>
     </Animated.View></GestureDetector></View>
     {sortingGroups && <Animated.View style={StyleSheet.absoluteFill} entering={SlideInDown.duration(240).easing(Easing.bezier(0.22, 1, 0.36, 1)).reduceMotion(ReduceMotion.System)}>
       <DraxProvider><CategoryOrder shop={shop} draft={categoryDraft!} change={setCategoryDraft} close={finishSorting} /></DraxProvider>
+    </Animated.View>}
+    {allItemsOpen && <Animated.View style={StyleSheet.absoluteFill} entering={SlideInDown.duration(240).easing(Easing.bezier(0.22, 1, 0.36, 1)).reduceMotion(ReduceMotion.System)}>
+      <DraxProvider><AllItems shop={shop} close={() => setAllItemsOpen(false)} /></DraxProvider>
     </Animated.View>}
   </Animated.View>;
 }

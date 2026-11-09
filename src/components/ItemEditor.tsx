@@ -1,8 +1,8 @@
 // Item and category composer sheets.
 import { useCallback, useRef, useState } from 'react';
 import { Keyboard, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { actions, getShopSnapshot, useShops } from '../store';
-import { findListItem, GROUP_ICONS, itemSuggestions, orderedGroups, type GroupIcon, type Shop } from '../model';
+import { actions, useShops } from '../store';
+import { GROUP_ICONS, itemSuggestions, orderedGroups, type GroupIcon, type Shop } from '../model';
 import { Icon, EditingRegion, InlineInput, Sheet, ui } from '../ui';
 import { colors as c, entityTone } from '../theme';
 import { s } from '../styles';
@@ -79,19 +79,11 @@ export function AddItem({ shop, close, initialCategory, editingId, onAdded, onDu
       if (category !== editing?.groupId) actions.moveItem(shop.id, editingId, category, null, true);
       Keyboard.dismiss(); close();
     } else {
-      const current = getShopSnapshot().data.shops.find(entry => entry.id === shop.id) ?? shop;
-      const existing = findListItem(current, name);
-      if (existing && !existing[1].done && !existing[1].missing) {
-        // Already on the list: keep the text, flag the input and the item instead of adding a copy.
-        setDuplicate(true); onDuplicate?.(existing[0]);
-        return false;
-      }
-      if (existing) {
-        // Done or missing: put the existing item back on the list instead of adding a copy.
-        actions.restoreItem(shop.id, existing[0]); onAdded?.(existing[0], existing[1].name, existing[1].groupId);
-        return;
-      }
-      const id = actions.addItem(shop.id, category, name); onAdded?.(id, name.trim(), category);
+      // Already on the list: keep the text, flag the input and the item instead of adding a copy.
+      // Done or missing items go back on the list instead of being added again.
+      const added = actions.quickAdd(shop.id, name, category);
+      if (added.result === 'duplicate') { setDuplicate(true); onDuplicate?.(added.id); return false; }
+      onAdded?.(added.id, added.name, added.groupId);
     }
   };
   return <Sheet visible compact canSwipeDown={() => scrollY.current <= 1} title={addingCategory ? 'Add category' : editing ? 'Edit item' : 'Add item'} onShow={focusInput} onClose={() => { Keyboard.dismiss(); close(); }}><EditingRegion style={{ flexShrink: 1 }}>

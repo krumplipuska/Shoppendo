@@ -67,7 +67,7 @@ const STEPS = [
   { title: 'Create a store', Preview: StorePreview,
     body: 'Tap Add store, type a name, and choose Create store. New stores start with six categories. To use a list someone shared with you, choose Join by ID.' },
   { title: 'Add list items', Preview: ItemsPreview,
-    body: 'Open a store and tap Add item, pick a category, and press Return to add the next one. Tick items as they go in your basket: Shoppendo learns your usual order and places items to match next time.' },
+    body: 'Open a store and tap Add item, pick a category, and press Return to add the next one. Tick items as they go in your basket: Shoppendo learns your usual order and places items to match next time. ⋯ → All items adds past items back.' },
   { title: 'Set the store order', Preview: OrderPreview,
     body: 'In a store, tap Store order, then hold and drag categories into the order of your route. Each store keeps its own order, and your list follows it.' },
 ];

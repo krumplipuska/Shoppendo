@@ -31,6 +31,8 @@ export type Write = {
   target: 'shop' | 'groups' | 'items';
   entityId: string;
   data: Record<string, unknown>;
+  // Erase the record entirely instead of patching it (All items → delete). Only for items.
+  remove?: boolean;
 };
 export type ItemSort = 'group' | 'name' | 'added';
 // Learned pick-up order: a check-off on a shopping trip, and per-store "A is picked before B" weights.
@@ -68,6 +70,11 @@ export function validName(input: string, max = 200) {
 }
 
 export function applyWrite(shop: Shop, write: Write): Shop {
+  if (write.remove) {
+    if (write.target !== 'items' || !Object.hasOwn(shop.items, write.entityId)) return shop;
+    const { [write.entityId]: _, ...items } = shop.items;
+    return { ...shop, items };
+  }
   const current = write.target === 'shop' ? shop : shop[write.target][write.entityId];
   if (current && Object.entries(write.data).every(([key, value]) => {
     const previous = (current as Record<string, unknown>)[key];
@@ -104,7 +111,8 @@ export function mergeRemote(state: SavedState, shopId: string, target: Write['ta
         ? { ...shop, name: data.name as string, groupOrder: data.groupOrder as string[],
           ...(data.groups && data.items ? { groups: data.groups as Shop['groups'], items: data.items as Shop['items'] } : {}) }
         : { ...shop, [target]: data };
-      for (const write of state.outbox.filter(w => w.shopId === shopId)) merged = applyWrite(merged, write);
+      // Unsent adds of an item the other phone already put on the list merge into it, as the server will.
+      merged = applyWritesMerged(merged, state.outbox.filter(w => w.shopId === shopId), shop);
       return keepUnchanged(shop, merged);
     }),
   };
@@ -192,6 +200,88 @@ export function findListItem(shop: Shop, name: string): [string, Item] | undefin
   }
   return match;
 }
+// Every item name this store has had, removed ones included, once each: in store category order, then A–Z.
+// Per name, the entry shown is the one adding it would act on (on the list, then done/missing, then removed).
+export type StoreItemStatus = 'list' | 'done' | 'missing' | 'removed';
+export type StoreItem = { key: string; id: string; name: string; groupId: string; status: StoreItemStatus };
+export function storeItems(shop: Shop): StoreItem[] {
+  const groups = orderedGroups(shop);
+  const rank = new Map(groups.map((id, index) => [id, index]));
+  const status = (item: Item): StoreItemStatus => item.deleted ? 'removed' : item.missing ? 'missing' : item.done ? 'done' : 'list';
+  const weight = { list: 0, done: 1, missing: 1, removed: 2 };
+  const best = new Map<string, { id: string; item: Item; status: StoreItemStatus }>();
+  for (const [id, item] of Object.entries(shop.items)) {
+    if (!rank.has(item.groupId)) continue;
+    const key = searchName(item.name);
+    if (!key) continue;
+    const entry = { id, item, status: status(item) };
+    const current = best.get(key);
+    if (!current || weight[entry.status] < weight[current.status]
+      || (weight[entry.status] === weight[current.status] && item.updatedAt > current.item.updatedAt)) best.set(key, entry);
+  }
+  return [...best].map(([key, { id, item, status }]) => ({ key, id, name: item.name.trim(), groupId: item.groupId, status }))
+    .sort((a, b) => rank.get(a.groupId)! - rank.get(b.groupId)! || a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }) || a.key.localeCompare(b.key));
+}
+
+// --- Same item added on two phones ---
+// Phones sync a few seconds after an edit (longer offline), so two people can add "Milk" before either
+// sees the other's. Each phone gives its copy a new ID, so the server would keep both.
+const onList = (shop: Shop, item: Item | undefined) =>
+  Boolean(item && !item.deleted && !item.done && !item.missing && shop.groups[item.groupId] && !shop.groups[item.groupId].deleted);
+// What another phone's edit may still change on the copy that was kept instead of its own.
+const MERGED_FIELDS = ['done', 'missing', 'deleted', 'updatedAt'];
+const otherOnList = (shop: Shop, id: string, name: string) =>
+  Object.entries(shop.items).find(([other, item]) => other !== id && onList(shop, item) && searchName(item.name) === searchName(name))?.[0];
+
+// Apply a phone's writes to the latest server copy of the shop (inside the sync transaction, so only
+// one phone at a time does this). An item that would join the list next to one with the same name
+// is merged into the item already there: a new copy is not created, a restored or renamed one is
+// removed, and the phone's later edits to its copy (check off, mark missing, delete) go to the kept
+// one. `local` is the sending phone's shop, which names items the server no longer has.
+export function applyWritesMerged(shop: Shop, writes: Write[], local?: Shop): Shop {
+  const merged = new Map<string, string>();
+  for (const original of writes) {
+    let write = original;
+    if (write.target === 'items') {
+      const missing = !shop.items[write.entityId];
+      const into = merged.get(write.entityId) ?? (missing && write.data.createdAt === undefined && local?.items[write.entityId]
+        ? otherOnList(shop, write.entityId, local.items[write.entityId].name) : undefined);
+      if (into) {
+        if (write.remove) continue; // Erasing a merged-away copy leaves the kept item alone.
+        write = { ...write, entityId: into, data: Object.fromEntries(Object.entries(write.data).filter(([key]) => MERGED_FIELDS.includes(key))) };
+        if (!Object.keys(write.data).length) continue;
+      } else if (missing && write.data.createdAt === undefined) continue; // An edit to a copy merged away in an earlier sync.
+    }
+    const next = applyWrite(shop, write);
+    if (write.target === 'items' && next !== shop) {
+      const before = shop.items[write.entityId], after = next.items[write.entityId];
+      const joins = onList(next, after) && (!onList(shop, before) || searchName(before.name) !== searchName(after.name));
+      const into = joins ? otherOnList(next, write.entityId, after.name) : undefined;
+      if (into) {
+        merged.set(write.entityId, into);
+        if (before) shop = applyWrite(next, { ...write, data: { deleted: true, updatedAt: after.updatedAt } });
+        continue;
+      }
+    }
+    shop = next;
+  }
+  return shop;
+}
+
+// Copies already on the list twice (from before merging, or from older app versions): keep the one
+// added first (then the smaller ID) and return the others' IDs. Every phone picks the same ones.
+export function duplicateItems(shop: Shop): string[] {
+  const kept = new Map<string, [string, Item]>();
+  const extra: string[] = [];
+  const entries = Object.entries(shop.items).filter(([, item]) => onList(shop, item))
+    .sort(([a, x], [b, y]) => x.createdAt - y.createdAt || (a < b ? -1 : a > b ? 1 : 0));
+  for (const [id, item] of entries) {
+    const key = searchName(item.name);
+    if (kept.has(key)) extra.push(id); else kept.set(key, [id, item]);
+  }
+  return extra;
+}
+
 export function itemSuggestions(shops: Shop[], shop: Shop, query: string) {
   const term = searchName(query);
   if (!term) return [];
@@ -262,6 +352,19 @@ export const TRIP_GAP_MS = 45 * 60_000;
 export const MIN_TRIP_PICKS = 3;
 const LEARN_DECAY = 0.7;
 export const MAX_LEARNED_ITEMS = 300;
+
+// Erasing an item also forgets where it is usually picked up.
+export function forgetItem(learning: Learning | undefined, key: string): Learning | undefined {
+  if (!learning || !(key in learning.seen || key in learning.pairs || Object.values(learning.pairs).some(after => key in after))) return learning;
+  const { [key]: _seen, ...seen } = learning.seen;
+  const pairs: Learning['pairs'] = {};
+  for (const [first, after] of Object.entries(learning.pairs)) {
+    if (first === key) continue;
+    const { [key]: _pair, ...rest } = after;
+    pairs[first] = rest;
+  }
+  return { pairs, seen };
+}
 
 export function learnTrip(learning: Learning | undefined, picks: TripPick[]): Learning | undefined {
   if (picks.length < MIN_TRIP_PICKS) return learning;

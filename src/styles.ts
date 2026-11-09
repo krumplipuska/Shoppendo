@@ -82,6 +82,12 @@ export const s = StyleSheet.create({
   composerInput: { borderWidth: 1.5, borderColor: c.primary, borderRadius: 14, paddingHorizontal: 6, overflow: 'hidden', marginBottom: 6 },
   composerDuplicate: { borderColor: c.danger, backgroundColor: '#FDF4F2' },
   duplicateText: { color: c.danger, fontFamily: f.medium, fontSize: 13, lineHeight: 18, marginTop: -2, marginBottom: 6, marginLeft: 4 },
+  // All items page: rows match list rows; the note under a name matches the Add item duplicate text.
+  allItemRow: { flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingLeft: 16, paddingRight: 4, paddingVertical: 8, gap: 8 },
+  allItemDivider: { borderBottomWidth: StyleSheet.hairlineWidth * 2, borderBottomColor: c.border },
+  allItemCategory: { maxWidth: '38%' },
+  allItemNote: { color: c.danger, fontFamily: f.medium, fontSize: 13, lineHeight: 18, marginTop: 2 },
+  allItemAdded: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   menuPosition: { position: 'absolute', top: 62, right: 12, zIndex: 20 },
   viewMenu: { width: 208, padding: 8, backgroundColor: c.white, borderRadius: 14, borderWidth: 1, borderColor: c.border, elevation: 8, shadowColor: c.text, shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: 4 } },
   menuCaption: { fontFamily: f.medium, color: c.muted, fontSize: 12, paddingHorizontal: 10, paddingVertical: 6 },

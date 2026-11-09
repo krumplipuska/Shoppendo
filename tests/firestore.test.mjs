@@ -61,6 +61,23 @@ test('concurrent devices add items and patch separate fields without replacing e
   assert.equal(result.items.apples.done, true);
 });
 
+test('two devices adding the same item at the same moment store one copy', async () => {
+  await Promise.all([
+    writeShop(alice, 'alice', [write('items', 'aliceMilk', { ...item('Milk'), createdAt: 3 })]),
+    writeShop(bob, 'bob', [write('items', 'bobMilk', { ...item('milk', 'bakery'), createdAt: 3 })]),
+  ]);
+  const milk = Object.values((await readShop(alice, 'alice', shopId)).items).filter(entry => entry.name.toLowerCase() === 'milk' && !entry.deleted);
+  assert.equal(milk.length, 1);
+});
+
+test('an erased item is removed from the document and a stale check-off cannot bring it back', async () => {
+  await writeShop(alice, 'alice', [write('items', 'eraseMe', { ...item('Soap'), createdAt: 3 })]);
+  await writeShop(alice, 'alice', [{ ...write('items', 'eraseMe', {}), remove: true }]);
+  await writeShop(bob, 'bob', [write('items', 'eraseMe', { done: true, updatedAt: 9 })]);
+  const data = (await getDoc(doc(alice, 'shops', shopId))).data();
+  assert.equal(Object.hasOwn(data.categories.fruits.items, 'eraseMe'), false);
+});
+
 test('one document listener receives another device checking an item', async () => {
   let stop;
   const received = new Promise((resolve, reject) => {
